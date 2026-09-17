@@ -47,8 +47,11 @@ type
   private
     fTemp: Boolean;
     fPad: Byte; // Padding between sprites to avoid neighbour edge visibility
+    fTilePx: Integer;  // rxTiles only: biggest tile edge in the loaded data (32 = SD, more = HD)
+    fMipLevels: Byte;  // rxTiles only: extra mip levels to generate for the atlases (0 = none)
 
     {$IFNDEF NO_OGL}
+    function GetTexFilter(out aMipLevels: Byte): TKMFilterType;
     procedure SetGFXData(aTexID: Cardinal; aSpriteInfo: TKMBinItem; aAtlasType: TKMSpriteAtlasType);
     procedure PrepareAtlases(aSpriteInfo: TBinArray; aMode: TKMSpriteAtlasType; aTexType: TKMTexFormat; var aBaseRAM, aColorRAM, aTexCount: Cardinal;
                              aFillGFXData: Boolean = True; aOnCheckTerminated: TBooleanFuncSimple = nil);
@@ -232,7 +235,8 @@ type
 var
   gGFXData: array [TRXType] of array of record
     Tex, Alt: TKMTexCoords; //AltID used for team colors and house building steps
-    PxWidth, PxHeight: Word;
+    PxWidth, PxHeight: Word; // Real texture pixels
+    Scale: Single;           // HD multiplier, copy of TRXData.Scale for consumers without an RXData at hand. Logical size = Px / Scale
   end;
 
 
@@ -259,8 +263,12 @@ uses
 
 const
   MAX_GAME_ATLAS_SIZE = 2048; //Max atlas size for KaM. No need for bigger atlases
+  // HD terrain tiles (Docs/HD_Rendering_Plan.md, Phase 1)
+  TILE_SD_PX = 32;             // Original tile size. Anything bigger is treated as HD
+  MAX_TILES_ATLAS_SIZE = 8192; // Tiles-only ceiling: 1646 tiles at 128px + padding need 8192 (plan 0.2). Other RX keep MAX_GAME_ATLAS_SIZE
+  TILES_HD_MIP_LEVELS = 2;     // Extra mip levels for HD tiles (D6: limited chain). Atlas padding = 2^levels
   SPRITE_TYPE_EXPORT_NAME: array [TKMSpriteAtlasType] of string = ('Base', 'Mask');
-  LOG_EXTRA_GFX: Boolean = False;
+  LOG_EXTRA_GFX: Boolean = True; // HD measurement (see Docs/HD_Rendering_Plan.md 0.1)
   OVERLOAD_SKIP_MASK = 'skip';
 
 var
@@ -274,6 +282,43 @@ begin
   if gRender <> nil then
     Result := Min(Result, TKMRender.MaxTextureSize);
   {$ENDIF}
+end;
+
+
+// Tiles have their own ceiling, so that the bigger atlas is not paid for by every other RX (bins are always full-size)
+function GetMaxTilesAtlasSize: Integer;
+begin
+  Result := MAX_TILES_ATLAS_SIZE;
+  {$IFNDEF NO_OGL}
+  if gRender <> nil then
+    Result := Min(Result, TKMRender.MaxTextureSize);
+  {$ENDIF}
+end;
+
+
+// Replicate the outermost sprite pixels into the aPad wide ring around it.
+// Needed so that linear filtering and mip levels never sample the neighbouring sprite.
+procedure ExtendSpriteEdges(var aAtlas: TKMCardinalArray; aAtlasW, aX, aY, aW, aH, aPad: Integer);
+var
+  P, I: Integer;
+begin
+  if (aW = 0) or (aH = 0) or (aPad = 0) then Exit;
+
+  // Rows above and below
+  for P := 1 to aPad do
+    for I := 0 to aW - 1 do
+    begin
+      aAtlas[(aY - P) * aAtlasW + aX + I]          := aAtlas[aY * aAtlasW + aX + I];
+      aAtlas[(aY + aH - 1 + P) * aAtlasW + aX + I] := aAtlas[(aY + aH - 1) * aAtlasW + aX + I];
+    end;
+
+  // Columns left and right, over the already extended row range (this fills the corners too)
+  for P := 1 to aPad do
+    for I := -aPad to aH - 1 + aPad do
+    begin
+      aAtlas[(aY + I) * aAtlasW + aX - P]          := aAtlas[(aY + I) * aAtlasW + aX];
+      aAtlas[(aY + I) * aAtlasW + aX + aW - 1 + P] := aAtlas[(aY + I) * aAtlasW + aX + aW - 1];
+    end;
 end;
 
 
@@ -571,15 +616,27 @@ end;
 
 
 procedure TKMSpritePack.Allocate(aCount: Integer);
+var
+  I, oldLen: Integer;
 begin
   fRXData.Count := aCount;
 
   aCount := fRXData.Count + 1;
   if not fTemp then
+  begin
+    oldLen := Length(gGFXData[fRT]);
     SetLength(gGFXData[fRT],      aCount);
+    for I := oldLen to aCount - 1 do
+      gGFXData[fRT, I].Scale := 1;
+  end;
   SetLength(fRXData.Flag,         aCount);
   SetLength(fRXData.Size,         aCount);
   SetLength(fRXData.Pivot,        aCount);
+  // Scale defaults to 1 (original resolution); SetLength zero-fills, so init the new tail explicitly
+  oldLen := Length(fRXData.Scale);
+  SetLength(fRXData.Scale,        aCount);
+  for I := oldLen to aCount - 1 do
+    fRXData.Scale[I] := 1;
   //SizeNoShadow is used only for Units
   if fRT = rxUnits then
     SetLength(fRXData.SizeNoShadow, aCount);
@@ -633,9 +690,12 @@ var
   pngWidth, pngHeight: Word;
   pngData: TKMCardinalArray;
   txtFileName: string;
+  oldCount: Integer;
+  oldScale, scale, sx, sy: Single;
 begin
   Assert(SameText(ExtractFileExt(aFilename), '.png'));
 
+  oldCount := fRXData.Count;
   if aIndex > fRXData.Count then
     Allocate(aIndex)
   else
@@ -646,6 +706,32 @@ begin
   LoadFromPng(aFolder + aFilename, pngWidth, pngHeight, pngData);
   Assert((pngWidth <= MAX_GAME_ATLAS_SIZE) and (pngHeight <= MAX_GAME_ATLAS_SIZE),
          Format('Image size should be less than %dx%d pixels', [MAX_GAME_ATLAS_SIZE, MAX_GAME_ATLAS_SIZE]));
+
+  // HD scale derivation (Docs/HD_Rendering_Plan.md 2.2, stage 1): a replacement PNG that is an integer multiple
+  // (2x..) of the original sprite's *logical* size in both axes is an HD version of it, not a bigger object.
+  // Compared against the logical size so that re-loading the same file from a second overload folder is stable.
+  scale := 1;
+  oldScale := fRXData.ScaleOf(aIndex);
+  if (aIndex <= oldCount) and (fRXData.Size[aIndex].X > 0) and (fRXData.Size[aIndex].Y > 0) then
+  begin
+    sx := pngWidth  / (fRXData.Size[aIndex].X / oldScale);
+    sy := pngHeight / (fRXData.Size[aIndex].Y / oldScale);
+    if (Round(sx) >= 2) and (Round(sx) = Round(sy))
+    and (Abs(sx - Round(sx)) <= 0.02) and (Abs(sy - Round(sy)) <= 0.02) then
+      scale := Round(sx)
+    else
+    if (Abs(sx - 1) > 0.02) or (Abs(sy - 1) > 0.02) then
+      gLog.AddTime(Format('Overload %s: %dx%d replaces logical %dx%d - not a uniform HD multiple, using scale 1 (object will change size)',
+                          [aFilename, pngWidth, pngHeight,
+                           Round(fRXData.Size[aIndex].X / oldScale), Round(fRXData.Size[aIndex].Y / oldScale)]));
+  end;
+  fRXData.Scale[aIndex] := scale;
+  // Keep the pivot in real texels of the new image. A .txt next to the PNG overrides this below (in the PNG's own pixels)
+  if scale <> oldScale then
+  begin
+    fRXData.Pivot[aIndex].X := Round(fRXData.Pivot[aIndex].X / oldScale * scale);
+    fRXData.Pivot[aIndex].Y := Round(fRXData.Pivot[aIndex].Y / oldScale * scale);
+  end;
 
   fRXData.Flag[aIndex] := Byte(pngWidth * pngHeight <> 0); //Mark as used (required for saving RXX)
   fRXData.Size[aIndex].X := pngWidth;
@@ -1323,6 +1409,24 @@ end;
 
 
 
+// Texture filtering for this pack's atlases. HD tiles get linear filtering with a short mip chain (plan 1.3),
+// everything else keeps the original nearest look.
+function TKMSpritePack.GetTexFilter(out aMipLevels: Byte): TKMFilterType;
+begin
+  Result := ftNearest;
+  aMipLevels := 0;
+
+  if LINEAR_FILTER_SPRITES and (fRT in [rxTrees, rxHouses, rxUnits]) then
+    Result := ftLinear;
+
+  if (fRT = rxTiles) and (fMipLevels > 0) then
+  begin
+    Result := ftLinear;
+    aMipLevels := fMipLevels;
+  end;
+end;
+
+
 //Set GFXData from SpriteInfo
 procedure TKMSpritePack.SetGFXData(aTexID: Cardinal; aSpriteInfo: TKMBinItem; aAtlasType: TKMSpriteAtlasType);
 var
@@ -1345,6 +1449,7 @@ begin
       gGFXData[fRT, spriteID].Tex := txCoords;
       gGFXData[fRT, spriteID].PxWidth := fRXData.Size[spriteID].X;
       gGFXData[fRT, spriteID].PxHeight := fRXData.Size[spriteID].Y;
+      gGFXData[fRT, spriteID].Scale := fRXData.ScaleOf(spriteID);
     end
     else
       gGFXData[fRT, spriteID].Alt := txCoords;
@@ -1379,6 +1484,7 @@ var
   ID: Integer;
   atlasData: TKMCardinalArray;
   texFilter: TKMFilterType;
+  mipLevels: Byte;
 begin
 //  gLog.AddTime('Length(aSpriteInfo) = ' + IntToStr(Length(aSpriteInfo)));
   //Prepare atlases
@@ -1395,43 +1501,16 @@ begin
     for K := 0 to High(aSpriteInfo[I].Sprites) do
     begin
       ID := aSpriteInfo[I].Sprites[K].SpriteID;
+      CT := aSpriteInfo[I].Sprites[K].OriginY;
+      CL := aSpriteInfo[I].Sprites[K].OriginX;
       for L := 0 to fRXData.Size[ID].Y - 1 do
       for M := 0 to fRXData.Size[ID].X - 1 do
       begin
-        CT := aSpriteInfo[I].Sprites[K].OriginY;
-        CL := aSpriteInfo[I].Sprites[K].OriginX;
         Pixel := (CT + L) * aSpriteInfo[I].Width + CL + M;
         if aMode = saBase then
           atlasData[Pixel] := fRXData.RGBA[ID, L * fRXData.Size[ID].X + M]
         else
           atlasData[Pixel] := $FFFFFF or (fRXData.Mask[ID, L * fRXData.Size[ID].X + M] shl 24);
-
-        //Fill padding with edge pixels
-        if fPad > 0 then
-        begin
-          if (M = 0) then
-          begin
-            atlasData[Pixel - 1] := atlasData[Pixel];
-            if (L = 0) then
-              atlasData[Pixel - aSpriteInfo[I].Width - 1] := atlasData[Pixel]
-            else
-            if (L = fRXData.Size[ID].Y - 1) then
-              atlasData[Pixel + aSpriteInfo[I].Width - 1] := atlasData[Pixel];
-          end;
-
-          if (M = fRXData.Size[ID].X - 1) then
-          begin
-            atlasData[Pixel + 1] := atlasData[Pixel];
-            if (L = 0) then
-              atlasData[Pixel - aSpriteInfo[I].Width + 1] := atlasData[Pixel]
-            else
-            if (L = fRXData.Size[ID].Y - 1) then
-              atlasData[Pixel + aSpriteInfo[I].Width + 1] := atlasData[Pixel];
-          end;
-
-          if (L = 0) then                       atlasData[Pixel - aSpriteInfo[I].Width] := atlasData[Pixel];
-          if (L = fRXData.Size[ID].Y - 1) then  atlasData[Pixel + aSpriteInfo[I].Width] := atlasData[Pixel];
-        end;
 
         //Sprite outline
         if OUTLINE_ALL_SPRITES and (
@@ -1440,16 +1519,18 @@ begin
           or (M = fRXData.Size[ID].X - 1)) then
           atlasData[Pixel] := $FF0000FF;
       end;
+
+      //Fill padding with edge pixels (fPad wide ring; HD tiles need more than 1px because of linear filtering + mipmaps)
+      if fPad > 0 then
+        ExtendSpriteEdges(atlasData, aSpriteInfo[I].Width, CL, CT, fRXData.Size[ID].X, fRXData.Size[ID].Y, fPad);
     end;
 
     if aFillGFXData then
     begin
       //Generate texture once
-      texFilter := ftNearest;
-      if LINEAR_FILTER_SPRITES and (fRT in [rxTrees, rxHouses, rxUnits]) then
-        texFilter := ftLinear;
+      texFilter := GetTexFilter(mipLevels);
 
-      texID := TKMRender.GenTexture(aSpriteInfo[I].Width, aSpriteInfo[I].Height, @atlasData[0], aTexType, texFilter, texFilter);
+      texID := TKMRender.GenTexture(aSpriteInfo[I].Width, aSpriteInfo[I].Height, @atlasData[0], aTexType, texFilter, texFilter, mipLevels);
 
       //Now that we know texture IDs we can fill GFXData structure
       SetGFXData(texID, aSpriteInfo[I], aMode);
@@ -1493,6 +1574,7 @@ var
 begin
   aBaseRAM := 0;
   aColorRAM := 0;
+  allTilesAtlasSize := 0;
   //Prepare base atlases
   SetLength(spriteSizes, aIDList.Count);// fRXData.Count - aStartingIndex + 1);
   K := 0;
@@ -1514,12 +1596,36 @@ begin
     atlasSize := 512
   else if fRT = rxTiles then
   begin
-    allTilesAtlasSize := MakePOT(Ceil(sqrt(K))*(32+2*fPad)); //Tiles are 32x32
-    atlasSize := Min(GetMaxAtlasSize, allTilesAtlasSize);       //Use smallest possible atlas size for tiles (should be 1024, until many new tiles were added)
-    if atlasSize = allTilesAtlasSize then
-      AllTilesInOneTexture := True;
+    // Tile size is derived from the loaded data, not hardcoded: after a PNG overload tiles may be mixed (32 px and HD)
+    fTilePx := TILE_SD_PX;
+    for J := 0 to K - 1 do
+      fTilePx := Max(fTilePx, Max(spriteSizes[J].X, spriteSizes[J].Y));
+
+    // Padding is decided first (from the mip chain), then the atlas size is computed from it (plan 1.1 / 1.4)
+    if fTilePx > TILE_SD_PX then
+    begin
+      fMipLevels := TILES_HD_MIP_LEVELS;
+      fPad := 1 shl TILES_HD_MIP_LEVELS;
+    end else
+    begin
+      fMipLevels := 0;
+      fPad := 1;
+    end;
+
+    allTilesAtlasSize := MakePOT(Ceil(sqrt(K))*(fTilePx + 2*fPad));
+    atlasSize := Min(GetMaxTilesAtlasSize, allTilesAtlasSize); //Use smallest possible atlas size for tiles
+    AllTilesInOneTexture := (atlasSize = allTilesAtlasSize);
+    if not AllTilesInOneTexture then
+      gLog.AddTime(Format('WARNING: %d tiles of %dpx do not fit into one atlas (need %d, max %d) - terrain falls back to per-tile texture binds',
+                          [K, fTilePx, allTilesAtlasSize, GetMaxTilesAtlasSize]));
   end else
     atlasSize := GetMaxAtlasSize;
+
+  // HD measurement (Docs/HD_Rendering_Plan.md 0.1): actual sprite count K and atlas sizing
+  if LOG_EXTRA_GFX then
+    gLog.AddTime(Format('[HD-MEASURE] %s: K=%d pad=%d atlasSize=%d maxAtlas=%d tilePx=%d mip=%d allTilesAtlasSize=%d allTilesInOne=%s',
+                        [RX_INFO[fRT].FileName, K, fPad, atlasSize, GetMaxAtlasSize, fTilePx, fMipLevels,
+                         allTilesAtlasSize, BoolToStr(AllTilesInOneTexture, True)]));
 
   SetLength(spriteInfo, 0);
   BinPack(spriteSizes, atlasSize, fPad, spriteInfo);
@@ -1578,6 +1684,7 @@ var
   SAT: TKMSpriteAtlasType;
   texID: Cardinal;
   texFilter: TKMFilterType;
+  mipLevels: Byte;
 {$ENDIF}
 begin
   {$IFNDEF NO_OGL}
@@ -1586,11 +1693,9 @@ begin
     begin
       with fAtlases[SAT,I] do
       begin
-        texFilter := ftNearest;
-        if LINEAR_FILTER_SPRITES and (fRT in [rxTrees, rxHouses, rxUnits]) then
-          texFilter := ftLinear;
+        texFilter := GetTexFilter(mipLevels);
 
-        texID := TKMRender.GenTexture(Container.Width, Container.Height, @Data[0], TexType, texFilter, texFilter);
+        texID := TKMRender.GenTexture(Container.Width, Container.Height, @Data[0], TexType, texFilter, texFilter, mipLevels);
         //Now that we know texture IDs we can fill GFXData structure
         SetGFXData(texID, Container, SAT);
 
@@ -1716,7 +1821,9 @@ var
 
   texId,{ K,} L, M, tmp, totalTex, uniqueTex: Integer;
   genTilesCnt, genTilesCntTemp: Integer;
-  straightPx{, RotatePixel}, maskCol: Cardinal;
+  tileW, tileH, maskW, maskH: Integer;
+  sameRes: Boolean;
+  straightPx, maskPx{, RotatePixel}, maskCol: Cardinal;
   generatedMasks: TDictionary<Integer, TKMMaskFullType>;
 begin
   Assert(not aLegacyGeneration or (aSprites = nil));
@@ -1829,16 +1936,28 @@ begin
     //            GetEnumName(TypeInfo(TKMTileMaskType), Integer(J)), TexId]);
 
     //          fGenTerrainToTerKind.Add(IntToStr(TexId) + '=' + IntToStr(Integer(I)));
-                for L := 0 to aSprites.fRXData.Size[terrainId].Y - 1 do
-                  for M := 0 to aSprites.fRXData.Size[terrainId].X - 1 do
+                // Mask and base tile may differ in resolution (HD base tile + original 32px mask, plan 1.5):
+                // sample the mask nearest-neighbour in the base tile's pixel grid
+                tileW := aSprites.fRXData.Size[terrainId].X;
+                tileH := aSprites.fRXData.Size[terrainId].Y;
+                maskW := aSprites.fRXData.Size[maskId].X;
+                maskH := aSprites.fRXData.Size[maskId].Y;
+                sameRes := (tileW = maskW) and (tileH = maskH);
+
+                for L := 0 to tileH - 1 do
+                  for M := 0 to tileW - 1 do
                   begin
       //              Rotate(K, L, M, P, Q, aSprites.fRXData.Size[TerrainId].X - 1);
-                    straightPx := L * aSprites.fRXData.Size[terrainId].X  + M;
+                    straightPx := L * tileW + M;
       //              RotatePixel := StraightPixel; //P * aSprites.fRXData.Size[TerrainId].X  + Q;
+                    if sameRes then
+                      maskPx := straightPx
+                    else
+                      maskPx := (L * maskH div tileH) * maskW + (M * maskW div tileW);
 
                     case TILE_MASK_KIND_USAGE[MK] of
-                      mkuPixel: maskCol := ($FFFFFF or (aSprites.fRXData.RGBA[maskId, straightPx] shl 24));
-                      mkuAlpha: maskCol := aSprites.fRXData.RGBA[maskId, straightPx];
+                      mkuPixel: maskCol := ($FFFFFF or (aSprites.fRXData.RGBA[maskId, maskPx] shl 24));
+                      mkuAlpha: maskCol := aSprites.fRXData.RGBA[maskId, maskPx];
                     else
                       raise Exception.Create('Unexpected type');
                     end;

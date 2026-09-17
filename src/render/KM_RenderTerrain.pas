@@ -1371,7 +1371,7 @@ begin
     y1 := pY - 1 - (gTerrain.LandExt^[pY, pX].RenderHeight + VO) / CELL_HEIGHT_DIV;
     y2 := pY - 1 - (gTerrain.LandExt^[pY, pX + 1].RenderHeight + VO) / CELL_HEIGHT_DIV;
 
-    fenceY := gGFXData[rxGui,texID].PxWidth / CELL_SIZE_PX;
+    fenceY := gGFXData[rxGui,texID].PxWidth / gGFXData[rxGui,texID].Scale / CELL_SIZE_PX;
     glBegin(GL_QUADS);
       glTexCoord2f(UVb.x, UVa.y); glVertex2f(pX-1 -3/ CELL_SIZE_PX, y1);
       glTexCoord2f(UVa.x, UVa.y); glVertex2f(pX-1 -3/ CELL_SIZE_PX, y1 - fenceY);
@@ -1386,12 +1386,12 @@ begin
     UVa.X := gGFXData[rxGui, texID].Tex.u1;
     UVa.Y := gGFXData[rxGui, texID].Tex.v1;
     UVb.X := gGFXData[rxGui, texID].Tex.u2;
-    UVb.Y := Mix(gGFXData[rxGui, texID].Tex.v2, gGFXData[rxGui, texID].Tex.v1, heightInPx / gGFXData[rxGui, texID].pxHeight);
+    UVb.Y := Mix(gGFXData[rxGui, texID].Tex.v2, gGFXData[rxGui, texID].Tex.v1, heightInPx / (gGFXData[rxGui, texID].pxHeight / gGFXData[rxGui, texID].Scale));
 
     y1 := pY - 1 - (gTerrain.LandExt^[pY, pX].RenderHeight + FO + VO) / CELL_HEIGHT_DIV;
     y2 := pY - (gTerrain.LandExt^[pY + 1, pX].RenderHeight + VO) / CELL_HEIGHT_DIV;
 
-    fenceX := gGFXData[rxGui,texID].PxWidth / CELL_SIZE_PX;
+    fenceX := gGFXData[rxGui,texID].PxWidth / gGFXData[rxGui,texID].Scale / CELL_SIZE_PX;
 
     case Pos of
       dirW:  x1 := pX - 1 - 3 / CELL_SIZE_PX;
