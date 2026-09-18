@@ -242,6 +242,11 @@ var
     Scale: Single;           // HD multiplier, copy of TRXData.Scale for consumers without an RXData at hand. Logical size = Px / Scale
   end;
 
+  // Overload file name 'X_nnnn.png' / 'X_nnnn@Nx.png' -> id and explicit HD scale (0 = none). Exposed for unit tests
+  function ParseOverloadFileName(const aFileName: string; out aId, aScale: Integer): Boolean;
+  // Replicate the outermost sprite pixels into the aPad wide ring around it (atlas edge padding). Exposed for unit tests
+  procedure ExtendSpriteEdges(var aAtlas: TKMCardinalArray; aAtlasW, aX, aY, aW, aH, aPad: Integer);
+
 
 implementation
 uses
@@ -351,6 +356,14 @@ begin
   end;
   // 'X_' prefix, then only digits
   Result := (Length(s) > 2) and TryStrToInt(Copy(s, 3, Length(s) - 2), aId);
+end;
+
+
+// TThread.CheckTerminated raises EThreadExternalException when called from a thread that was not created by TThread
+// (the main thread included). The loaders run both in the async loader thread and, in the sync path, on the main thread
+function LoaderThreadTerminated: Boolean;
+begin
+  Result := not TThread.CurrentThread.ExternalThread and TThread.CheckTerminated;
 end;
 
 
@@ -1024,7 +1037,7 @@ begin
           decompressionStream.Read(fRXData.HasMask[I], 1);
 
           // Check if our load resource thread was terminated
-          if TThread.CheckTerminated then Exit;
+          if LoaderThreadTerminated then Exit;
         end;
 
       //Atlases
@@ -1049,7 +1062,7 @@ begin
             decompressionStream.Read(Data[0], dataCount*SizeOf(Data[0]));
 
             // Check if our load resource thread was terminated
-            if TThread.CheckTerminated then Exit;
+            if LoaderThreadTerminated then Exit;
           end;
       end;
     finally
@@ -1257,7 +1270,7 @@ begin
   ForceDirectories(aFolder);
 
   for I := 1 to fRXData.Count do
-  if not TThread.CheckTerminated then
+  if not LoaderThreadTerminated then
     ExportFullImageData(aFolder, I);
 end;
 
