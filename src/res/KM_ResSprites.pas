@@ -21,12 +21,13 @@ type
     rxxUnknown, // Unknown header, probably not an RXX file at all
     rxxZero,    // Legacy KMR format
     rxxOne,     // Same as previous, but with an explicit header and SizeNoShadow
-    rxxTwo      // Same as previous, but with dynamic length text in header
+    rxxTwo,     // Same as previous, but with dynamic length text in header
+    rxxThree    // Same as previous, plus per-sprite Scale (HD multiplier, Single) and per-atlas HD flag in RXA (Docs/HD_Rendering_Plan.md 2.2 stage 3)
   );
 
 const
   RXX_HEADER_LENGTH = 4;
-  RXX_HEADER: array [TKMRXXFormat] of AnsiString = ('', '', 'RXX1', 'RXX2');
+  RXX_HEADER: array [TKMRXXFormat] of AnsiString = ('', '', 'RXX1', 'RXX2', 'RXX3');
 
 type
   {$IFDEF LOAD_GAME_RES_ASYNC}
@@ -882,9 +883,12 @@ begin
     // Skip 32 bytes of metadata
     aStream.Seek(32, soFromCurrent);
   end else
-  if strFormat = RXX_HEADER[rxxTwo] then
+  if (strFormat = RXX_HEADER[rxxTwo]) or (strFormat = RXX_HEADER[rxxThree]) then
   begin
-    aFormat := rxxTwo;
+    if strFormat = RXX_HEADER[rxxTwo] then
+      aFormat := rxxTwo
+    else
+      aFormat := rxxThree;
 
     // For now we just skip metadata (but in the future we could show it in e.g. RXXEditor)
     aStream.Read(metadataLen, SizeOf(metadataLen));
@@ -945,6 +949,9 @@ begin
           //SizeNoShadow is used only for Units
           if fRT = rxUnits then
             decompressionStream.Read(fRXData.SizeNoShadow[I].Left, SizeOf(fRXData.SizeNoShadow[I]));
+          // HD scale (RXX3). Older formats have none: Allocate defaulted it to 1
+          if rxxFormat = rxxThree then
+            decompressionStream.Read(fRXData.Scale[I], SizeOf(fRXData.Scale[I]));
           //Data part of each sprite is 32BPP RGBA in Remake RXX files
           SetLength(fRXData.RGBA[I], fRXData.Size[I].X * fRXData.Size[I].Y);
           SetLength(fRXData.Mask[I], fRXData.Size[I].X * fRXData.Size[I].Y);
@@ -1011,6 +1018,9 @@ begin
           //SizeNoShadow is used only for Units
           if fRT = rxUnits then
             decompressionStream.Read(fRXData.SizeNoShadow[I].Left, SizeOf(fRXData.SizeNoShadow[I]));
+          // HD scale (RXA3). Older formats have none: Allocate defaulted it to 1
+          if rxxFormat = rxxThree then
+            decompressionStream.Read(fRXData.Scale[I], SizeOf(fRXData.Scale[I]));
           decompressionStream.Read(fRXData.HasMask[I], 1);
 
           // Check if our load resource thread was terminated
@@ -1031,6 +1041,9 @@ begin
             SetLength(Container.Sprites, spriteCount);
             decompressionStream.Read(Container.Sprites[0], spriteCount * SizeOf(Container.Sprites[0]));
             decompressionStream.Read(TexType, SizeOf(TKMTexFormat));
+            // HD atlas flag (RXA3): decides linear filtering + mips at texture generation. Older RXA are all SD (False)
+            if rxxFormat = rxxThree then
+              decompressionStream.Read(HD, SizeOf(HD));
             decompressionStream.Read(dataCount, 4);
             SetLength(Data, dataCount);
             decompressionStream.Read(Data[0], dataCount*SizeOf(Data[0]));

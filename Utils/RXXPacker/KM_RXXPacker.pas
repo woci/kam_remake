@@ -11,6 +11,7 @@ type
   private
     fSourcePathRX: string;
     fSourcePathInterp: string;
+    fSourcePathHD: string;
     fDestinationPath: string;
 
     fPalettes: TKMResPalettes;
@@ -22,8 +23,10 @@ type
     procedure DoLog(aMsg: string);
 
     procedure Pack(aRT: TRXType);
+    procedure PackHD(aRT: TRXType);
     procedure SetDestinationPath(const aValue: string);
     procedure SetSourcePathInterp(const aValue: string);
+    procedure SetSourcePathHD(const aValue: string);
     procedure SetSourcePathRX(const aValue: string);
   public
     PackToRXX: Boolean;
@@ -33,9 +36,14 @@ type
     constructor Create(aPalettes: TKMResPalettes; aOnMessage: TProc<string>);
 
     procedure PackSet(aRxSet: TRXTypeSet);
+    // HD packing (Docs/HD_Rendering_Plan.md 2.2 stage 3): takes the shipped RXX files from SourcePathRX, applies the
+    // replacement PNGs from SourcePathHD (a 'Modding graphics' style folder tree) exactly as the game would at startup,
+    // and writes RXX3 / RXA3 files with the per-sprite scale into DestinationPath
+    procedure PackHDSet(aRxSet: TRXTypeSet);
 
     property SourcePathRX: string read fSourcePathRX write SetSourcePathRX;
     property SourcePathInterp: string read fSourcePathInterp write SetSourcePathInterp;
+    property SourcePathHD: string read fSourcePathHD write SetSourcePathHD;
     property DestinationPath: string read fDestinationPath write SetDestinationPath;
 
     class function GetAvailableToPack(const aPath: string): TRXTypeSet;
@@ -250,6 +258,94 @@ begin
 end;
 
 
+procedure TKMRXXPacker.PackHD(aRT: TRXType);
+var
+  tick: Cardinal;
+  spritePack: TKMSpritePackEdit;
+  srcRxx, name: string;
+  I, hdCount: Integer;
+  rxData: TRXData;
+begin
+  fCurrentRT := aRT;
+
+  tick := GetTickCount;
+  DoLog('Packing HD ...');
+
+  //ruCustom sprite packs do not have a main RXX file so don't need packing
+  if RX_INFO[aRT].Usage = ruCustom then Exit;
+
+  // Source is the shipped RXX the game itself loads: the _a variant has the soft shadows baked in already
+  name := RX_INFO[aRT].FileName;
+  srcRxx := SourcePathRX + name + '_a.rxx';
+  if not FileExists(srcRxx) then
+    srcRxx := SourcePathRX + name + '.rxx';
+  if not FileExists(srcRxx) then
+    raise Exception.Create('Cannot find "' + srcRxx + '" file.');
+
+  spritePack := TKMSpritePackEdit.Create(aRT, fPalettes);
+  try
+    spritePack.LoadFromRXXFile(srcRxx);
+    DoLog(Format('%s contains %d entries', [ExtractFileName(srcRxx), spritePack.RXData.Count]));
+
+    // Apply the replacement PNGs the same way the game does at startup: scale derived from the size or '@Nx',
+    // no shadow softening on HD sprites, hitboxes recomputed for units
+    spritePack.OverloadRXDataFromFolder(SourcePathHD, DoLog);
+
+    hdCount := 0;
+    rxData := spritePack.RXData;
+    for I := 1 to rxData.Count do
+      if (rxData.Flag[I] <> 0) and (rxData.ScaleOf(I) > 1) then
+        Inc(hdCount);
+    DoLog(Format('With overload contains %d entries, %d of them HD', [spritePack.RXData.Count, hdCount]));
+    if hdCount = 0 then
+      DoLog('WARNING: no HD sprites were found in ' + SourcePathHD);
+
+    if PackToRXX then
+    begin
+      DoLog('Saving ' + ExtractFileName(srcRxx) + ' (RXX3)');
+      spritePack.SaveToRXXFile(DestinationPath + ExtractFileName(srcRxx), rxxThree);
+    end;
+
+    // Tiles are menu resources, the game always loads them from RXX, so an RXA would never be used
+    if PackToRXA and (aRT <> rxTiles) then
+    begin
+      DoLog('Saving ' + name + '.rxa (RXA3)');
+      spritePack.SaveToRXAFile(DestinationPath + name + '.rxa', rxxThree);
+    end;
+  finally
+    spritePack.Free;
+  end;
+
+  DoLog(Format('... packed in %dms', [GetTickCount - tick]));
+end;
+
+
+procedure TKMRXXPacker.PackHDSet(aRxSet: TRXTypeSet);
+var
+  I: TRXType;
+begin
+  if not DirectoryExists(SourcePathRX) then
+  begin
+    fOnMessage('Cannot find "' + SourcePathRX + '" folder.' + sLineBreak + 'It should contain the RXX files to start from (e.g. data\Sprites).');
+    Exit;
+  end;
+
+  if not DirectoryExists(SourcePathHD) then
+  begin
+    fOnMessage('Cannot find "' + SourcePathHD + '" folder.' + sLineBreak + 'It should contain the HD replacement PNGs (e.g. Modding graphics).');
+    Exit;
+  end;
+
+  fTimeBegin := Now;
+
+  for I := Low(TRXType) to High(TRXType) do
+  if I in aRxSet then
+    PackHD(I);
+
+  fOnMessage(Format('Everything packed in %dsec', [Round((Now - fTimeBegin) * SecsPerDay)]));
+end;
+
+
 procedure TKMRXXPacker.PackSet(aRxSet: TRXTypeSet);
 var
   I: TRXType;
@@ -285,6 +381,12 @@ end;
 procedure TKMRXXPacker.SetSourcePathInterp(const aValue: string);
 begin
   fSourcePathInterp := IncludeTrailingPathDelimiter(aValue);
+end;
+
+
+procedure TKMRXXPacker.SetSourcePathHD(const aValue: string);
+begin
+  fSourcePathHD := IncludeTrailingPathDelimiter(aValue);
 end;
 
 
