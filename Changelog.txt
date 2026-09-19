@@ -29,6 +29,8 @@ KaM Remake Beta r_____ []
 + Shadow softening is skipped for HD replacement sprites (they come with real alpha)
 + Faster PNG loading of replacement graphics (row-based reading instead of per-pixel access)
 + Fixed the async resource loader applying the 'Modding graphics' overload twice when loading from RXX (doubled load time and memory)
++ Fixed RXA loading (and sprite export) raising EThreadExternalException when run on the main thread, i.e. with the async resource loader disabled
++ Unit tests for the sprite pack HD support (Utils/UnitTests/TestKM_ResSprites.pas) and for the HD generator script; fixed the stale TKMemoryStream tests in TestKM_CommonClasses
 + Utils/HDTileTest: script that generates HD test sets from the shipped RXX files (bilinear or xBR upscale, team colour masks, colour bleed into transparent pixels) and exports/imports sprites for external upscalers such as Real-ESRGAN
 + Excluded OpenAL32.dll from the installation (as it doesn't work for some PCs)
 + Fixed a bug where melee units fighting ranged and melee enemies would not assist each other against nearby ranged units
