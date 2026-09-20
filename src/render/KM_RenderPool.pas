@@ -27,7 +27,6 @@ type
   // List of sprites prepared to be rendered
   TKMRenderList = class
   private
-    fUnitsRXData: TRXData; //shortcut
     fCount: Word;
     fRenderOrder: array of Word; // Order in which sprites will be drawn ()
     fRenderList: array of TKMRenderSprite;
@@ -113,6 +112,8 @@ type
     constructor Create(aViewport: TKMViewport; aRender: TKMRender);
     destructor Destroy; override;
 
+    // Re-take the RXData shortcuts. Needed after the HD/SD compare swap replaced sprite packs (Docs/HD_Rendering_Plan.md 11)
+    procedure RefreshRXData;
     procedure ReInit;
 
     procedure AddAlert(const aLoc: TKMPointF; aId: Integer; aFlagColor: TColor4);
@@ -175,14 +176,24 @@ const
 
 
 { TKMRenderPool }
-constructor TKMRenderPool.Create(aViewport: TKMViewport; aRender: TKMRender);
+procedure TKMRenderPool.RefreshRXData;
 var
   RT: TRXType;
 begin
-  inherited Create;
-
   for RT := Low(TRXType) to High(TRXType) do
     fRXData[RT] := gRes.Sprites[RT].RXData;
+
+  // The tileset may have been swapped too, its UV lookup and VBO content are per tileset
+  if fRenderTerrain <> nil then
+    fRenderTerrain.RebuildTileUVLookup;
+end;
+
+
+constructor TKMRenderPool.Create(aViewport: TKMViewport; aRender: TKMRender);
+begin
+  inherited Create;
+
+  RefreshRXData;
 
   fRender := aRender;
   fViewport := aViewport;
@@ -1941,8 +1952,6 @@ begin
 
   // Pre-allocate some space
   SetLength(fRenderList, 512);
-
-  fUnitsRXData := gRes.Sprites[rxUnits].RXData;
 end;
 
 
@@ -2094,6 +2103,7 @@ const
 var
   hAdd, imH, hTop, s: Single;
   snsTop, snsBottom: Integer;
+  unitsRXData: PRXData;
 begin
   if fCount >= Length(fRenderList) then
     SetLength(fRenderList, fCount + 256); // Book some space
@@ -2110,10 +2120,12 @@ begin
   if aUID > 0 then
     with fRenderList[fCount].SelectionRect do
     begin
+      // Read per call, not cached: the HD/SD compare swap replaces the units sprite pack (plan 11)
+      unitsRXData := gRes.Sprites[rxUnits].RXDataP;
       // SizeNoShadow is in real texels, the selection rect is in logical (world) pixels -> divide by the sprite's HD scale
-      s := fUnitsRXData.ScaleOf(aId);
-      snsTop    := fUnitsRXData.SizeNoShadow[aId].Top;
-      snsBottom := fUnitsRXData.SizeNoShadow[aId].Bottom;
+      s := unitsRXData^.ScaleOf(aId);
+      snsTop    := unitsRXData^.SizeNoShadow[aId].Top;
+      snsBottom := unitsRXData^.SizeNoShadow[aId].Bottom;
 
       imH := (snsBottom - snsTop + 1) / s;
       hTop := EnsureRange(imH, CELL_SIZE_PX, MAX_SEL_RECT_HEIGHT);
@@ -2121,9 +2133,9 @@ begin
       //Enlarge rect from image size to the top, to be at least CELL_SIZE_PX height
       hAdd := Max(0, CELL_SIZE_PX - imH); // height to add to image pos. half to the top, half to the bottom
 
-      Left := pX - 0.5 - fUnitsRXData.PivotXf(aId) / CELL_SIZE_PX;
+      Left := pX - 0.5 - unitsRXData^.PivotXf(aId) / CELL_SIZE_PX;
       Right := Left + 1; // Exactly +1 tile
-      Bottom := gY + ((hAdd / 2) - (fUnitsRXData.SizeYf(aId) - (snsBottom + 1) / s))/ CELL_SIZE_PX; // Consider shadow at the image bottom
+      Bottom := gY + ((hAdd / 2) - (unitsRXData^.SizeYf(aId) - (snsBottom + 1) / s))/ CELL_SIZE_PX; // Consider shadow at the image bottom
       Top := Bottom - hTop / CELL_SIZE_PX; // -1 ~ -1.5 tiles
     end;
 
