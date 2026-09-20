@@ -98,6 +98,8 @@ type
   public
     constructor Create;
     destructor Destroy; override;
+    // After the HD/SD tileset swap the UV lookup and the cached VBO content are stale (Docs/HD_Rendering_Plan.md 12)
+    procedure RebuildTileUVLookup;
     property ClipRect: TKMRect read fClipRect write fClipRect;
     procedure RenderBase(aAnimStep: Integer; aFOW: TKMFogOfWarCommon);
     procedure RenderFences(aFOW: TKMFogOfWarCommon);
@@ -126,19 +128,33 @@ const
 
 
 { TKMRenderTerrain }
-constructor TKMRenderTerrain.Create;
+//Tiles UV lookup for faster access. Only base tileset for smaller size
+procedure TKMRenderTerrain.RebuildTileUVLookup;
 var
   I, K: Integer;
+begin
+  if SKIP_RENDER then Exit;
+
+  for I := 0 to TILES_CNT - 1 do
+    for K := 0 to 3 do
+      fTileUVLookup[I, K] := GetTileUV(I, K);
+
+  // Force UpdateVBO to refill the buffers, they hold the UVs of the previous tileset
+  fVBOLastClipRect := KMRECT_INVALID_TILES;
+  fVBOLastGameTick := Cardinal(-1);
+end;
+
+
+constructor TKMRenderTerrain.Create;
+var
+  I: Integer;
   pData: array [0..255] of Cardinal;
   V: TKMVBOArrayType;
 begin
   inherited;
   if SKIP_RENDER then Exit;
 
-  //Tiles UV lookup for faster access. Only base tileset for smaller size
-  for I := 0 to TILES_CNT - 1 do
-    for K := 0 to 3 do
-      fTileUVLookup[I, K] := GetTileUV(I, K);
+  RebuildTileUVLookup;
 
   //Generate gradient programmatically
   //KaM uses [0..255] gradients

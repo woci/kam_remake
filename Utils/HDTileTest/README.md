@@ -76,8 +76,8 @@ them base frames). `--rxa` cuts the sprites out of an `.rxa`; with
 `--interp-only` it takes only the frames that are missing from `--rxx`:
 
 ```
-python Utils\HDTileTest\make_hd_test_tiles.py --rxa data\Sprites\_rxa_disabled\Trees.rxa  --rxx data\Sprites\Trees_a.rxx  --rx 1 --interp-only --out "Modding graphics\hd_trees_interp"
-python Utils\HDTileTest\make_hd_test_tiles.py --rxa data\Sprites\_rxa_disabled\Houses.rxa --rxx data\Sprites\Houses_a.rxx --rx 2 --interp-only --out "Modding graphics\hd_houses_interp"
+python Utils\HDTileTest\make_hd_test_tiles.py --rxa data\Sprites\Trees.rxa  --rxx data\Sprites\Trees_a.rxx  --rx 1 --interp-only --out "Modding graphics\hd_trees_interp"
+python Utils\HDTileTest\make_hd_test_tiles.py --rxa data\Sprites\Houses.rxa --rxx data\Sprites\Houses_a.rxx --rx 2 --interp-only --out "Modding graphics\hd_houses_interp"
 ```
 
 These sprites have no original in the RXX the engine could derive the scale
@@ -88,6 +88,28 @@ file (and the hitbox lines for units); the engine and the packer read both.
 Mind the size: the unit frames are about 7x the base set (roughly 6 GB of
 texture memory at 4x), which does not fit a 32-bit build. Use `--scale 2` for
 them, or a 64-bit build of the game and the packer.
+
+## One house at a time: context sheet for an image model
+
+`make_house_sheet.py` collects every sprite that belongs to one house and writes three things:
+
+```
+python Utils\HDTileTest\make_house_sheet.py --house sawmill
+```
+
+- `house_sheets\sawmill\` – the individual sprites as PNG (alpha kept, colour bled). These are
+  what you actually upscale.
+- `house_sheets\sawmill_sheet.png` – all of them on one numbered grid, so an image model can see
+  the whole building, its construction frame, the work animation, and the wares it consumes and
+  produces in one go.
+- `house_sheets\sawmill_masks.png` + `sawmill_manifest.txt` / `.json` – the masks separately (they
+  are data, not art: build order on the big sprites, team colour on the small ones) and a text
+  listing of what every cell is. Paste the manifest next to the image in the prompt; a model reads
+  text far more reliably than labels rendered into pixels.
+
+Sprite ids come from `data\defines\houses.dat` (the same record layout the engine reads) plus the
+hardcoded snow sprites in `KM_ResHouses.pas`. `--list` prints the house names, `--with-fire` adds
+the generic burning animation, `--cols` changes the grid width.
 
 ## Only a few sprites
 
@@ -108,29 +130,47 @@ name contains `skip` (`hd_units_skip`).
 
 ## Finalising: native HD packs (fast loading)
 
-Once you are happy, bake the PNGs into RXA packs, which load in about 10 s:
+Once you are happy, bake the PNGs into RXA packs, which load in about 10 s
+instead of the 35 s the PNG route needs.
+
+**Where the files live.** `data\Sprites` holds the stock (SD) packs and stays
+untouched - an installation without HD is a vanilla game. The HD packs go into
+**`data\Sprites\hd\`**, and the game loads them only when HD graphics are
+switched on.
 
 ```
 cd Utils\RXXPacker
 RXXPacker.exe srx "..\..\data\Sprites\" hd "..\..\Modding graphics\" d "..\HDTileTest\hd_out\" rxa trees houses units tileset
 cd ..\..
-copy Utils\HDTileTest\hd_out\*.rxa data\Sprites\
-copy Utils\HDTileTest\hd_out\Tileset.rxx data\Sprites\
+copy Utils\HDTileTest\hd_out\*.rxa "data\Sprites\hd\"
+copy Utils\HDTileTest\hd_out\Tileset.rxx "data\Sprites\hd\"
 ```
 
-Then rename the HD folders in `Modding graphics` to `skip`, otherwise the
-game would apply the PNGs on top of the packs once more.
+`srx` is where the stock RXX files are read from, `hd` is the PNG folder tree
+that gets applied on top of them, `d` is the output folder. Tiles have no RXA
+(the game always loads the tileset from RXX), so `Tileset.rxx` is the tile
+output. The packer must be built first from `Utils\RXXPacker\RXXPacker.dproj`.
+
+Then rename the HD folders in `Modding graphics` to `skip`, otherwise the game
+would apply the PNGs on top of the packs once more - slowly, and overwriting
+what you just baked.
+
+Switch it on in the game: **Options - Graphics - HD sprites**, or Ctrl+Shift+H
+during a game. No restart, the switch loads the other set in a few seconds
+(terrain included) and remembers the choice.
 
 **Important:** the packer bakes exactly what `Modding graphics` would show at
 that moment, alphabetical precedence included. A forgotten probe folder (for
 example a single ESRGAN grass tile) can ruin the whole map, because the base
 grass tile is also the source of every generated grass transition. Before
-packing, check in the game that only the folders you want to finalise are
-active.
+packing, check that only the folders you want to finalise are active:
 
-Keep a copy of the original SD `Tileset.rxx` (for example in
-`data\Sprites\_sd_backup\`); to revert, copy it back and delete the three
-`.rxa` files.
+```
+Get-ChildItem "Modding graphics" -Directory | Where-Object { $_.Name -notmatch 'skip' }
+```
+
+To revert, delete `data\Sprites\hd\` (or just switch HD off in the options).
+The stock files are never modified.
 
 ## Other switches
 

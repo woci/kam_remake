@@ -93,6 +93,8 @@ type
     procedure SaveGameWholeMapToImage(aImageType: TKMImageType; aMaxImageSize: Integer = 0);
 
     procedure PreloadGameResources;
+    // Stock <-> HD graphics switch, used by the options checkbox and the Ctrl+Shift+H shortcut
+    function SetHDGraphics(aEnable: Boolean): Boolean;
 
     //These are all different game kinds we can start
     procedure NewGameCampaignMap(aCampaignIdStr: UnicodeString; aMap: Word; aDifficulty: TKMMissionDifficulty = mdNone);
@@ -174,6 +176,7 @@ uses
   KM_HandsCollection,
   KM_GameSavePoints,
   KM_Cursor, KM_ResTexts, KM_ResKeys, KM_ResTypes,
+  KM_InterfaceGamePlay, KM_RenderPool, KM_GameAppSettings,
   KM_IoGraphicUtils, KM_Settings,
   KM_Saves, KM_CommonUtils, KM_CommonShellUtils,
   {$IFDEF DBG_RNG_SPY}KM_RandomChecks,{$ENDIF}
@@ -676,7 +679,76 @@ begin
   end;
 
   FreeThenNil(gGame);
+
+  // Leaving the map: what the player switched to stays on screen (and in the settings), the other
+  // graphics set is freed (Docs/HD_Rendering_Plan.md 12)
+  gRes.Sprites.ReleaseHiddenSets;
+
   gLog.AddTime('Gameplay ended - ' + GetEnumName(TypeInfo(TKMGameResultMsg), Integer(aMsg)) + ' /' + aTextMsg);
+end;
+
+
+// Switch between the stock and the optional HD graphics (Docs/HD_Rendering_Plan.md 12).
+// Single entry point for the options checkbox and the Ctrl+Shift+H shortcut, in game and in the menu alike.
+// Returns False if the other set could not be loaded (the displayed one is then untouched)
+function TKMGameApp.SetHDGraphics(aEnable: Boolean): Boolean;
+var
+  gamePlayUI: TKMGamePlayInterface;
+  wasPaused: Boolean;
+  onProgress: TUnicodeStringEvent;
+begin
+  Result := True;
+  if aEnable = gRes.Sprites.HDActive then Exit;
+
+  // Loading blocks the main thread for seconds, which would drop a multiplayer connection.
+  // Guard here, at the single entry point, not at the call sites
+  if (gGame <> nil) and gGame.Params.IsMultiPlayerOrSpec then Exit(False);
+
+  gamePlayUI := nil;
+  if (gGame <> nil) and (gGame.ActiveInterface is TKMGamePlayInterface) then
+    gamePlayUI := TKMGamePlayInterface(gGame.ActiveInterface);
+
+  // Loading blocks the main thread for seconds. Without pausing, the game would count those seconds as
+  // game time and then race through the missed ticks (TKMGame.GetTicksBehindCnt works from real time).
+  // Restoring IsPaused also resets the tick counters (SetIsPaused -> UpdateTickCounters)
+  wasPaused := False;
+  if gGame <> nil then
+  begin
+    wasPaused := gGame.IsPaused;
+    gGame.IsPaused := True;
+  end;
+
+  onProgress := nil;
+  if gamePlayUI <> nil then
+  begin
+    gamePlayUI.ShowGraphicsLoading;
+    onProgress := gamePlayUI.GraphicsLoadingStep;
+  end
+  else
+    gSystem.Cursor := kmcAnimatedDirSelector; // In the menu there is no cover to show, just the busy cursor
+
+  try
+    Result := gRes.Sprites.SetHDGraphics(aEnable, onProgress);
+
+    if Result then
+    begin
+      // The render pool caches RXData copies and a tile UV lookup of the sets that were just swapped out
+      if gRenderPool <> nil then
+        gRenderPool.RefreshRXData;
+
+      // Remember it, so that the next map and the next start come up with the set the player chose
+      gGameSettings.HDGraphics := gRes.Sprites.HDActive;
+      gGameAppSettings.SaveSettings;
+    end;
+  finally
+    if gamePlayUI <> nil then
+      gamePlayUI.HideGraphicsLoading
+    else
+      gSystem.Cursor := kmcDefault;
+
+    if gGame <> nil then
+      gGame.IsPaused := wasPaused;
+  end;
 end;
 
 
@@ -713,6 +785,8 @@ begin
     fOnGameEnd(gGame.Params.Mode);
 
   FreeThenNil(gGame);
+
+  gRes.Sprites.ReleaseHiddenSets;
 
   fNetworking.ReturnToLobby; //Clears gGame event pointers from Networking
   fMainMenuInterface.ReturnToLobby(RETURN_TO_LOBBY_SAVE); //Assigns Lobby event pointers to Networking and selects map
