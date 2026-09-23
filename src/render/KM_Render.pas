@@ -269,6 +269,9 @@ end;
 class procedure TKMRender.DeleteTexture(aTex: GLUint);
 begin
   glDeleteTextures(1, @aTex);
+  // OpenGL hands deleted names out again, so the next texture may get this very id.
+  // BindTexture would then believe it is already bound and skip the call -> wrong or white sprites
+  fLastBindedTextureId := 0;
 end;
 
 
