@@ -205,7 +205,7 @@ type
     Label_Time: TKMLabel;
     Label_ClockSpeedActual: TKMLabel;
     Label_ClockSpeedRecorded: TKMLabel;
-    // HD / stock graphics switch (Docs/HD_Rendering_Plan.md 12)
+    // HD / stock graphics switch
     Label_HDState: TKMLabel;     // Shown while the optional HD graphics are on
     Panel_HDLoading: TKMPanel;   // Cover while the other set is being loaded
     Bevel_HDLoading: TKMBevel;
@@ -1109,7 +1109,7 @@ end;
 
 
 // Waiting for Net events page, it's similar to PlayMore, but is layered differentlybelow chat panel
-// Full screen cover for the seconds the HD / stock graphics switch takes (Docs/HD_Rendering_Plan.md 12)
+// Full screen cover for the seconds the HD / stock graphics switch takes
 procedure TKMGamePlayInterface.Create_HDLoading;
 begin
   Panel_HDLoading := TKMPanel.Create(Panel_Main, 0, 0, Panel_Main.Width, Panel_Main.Height);
@@ -3663,7 +3663,7 @@ end;
 
 
 // Switch the whole graphics set (terrain included) between the stock and the optional HD packs
-// in data/Sprites/hd (Docs/HD_Rendering_Plan.md 12). The first switch loads the other set, which takes seconds
+// in data/Sprites/hd. The first switch loads the other set, which takes seconds
 function TKMGamePlayInterface.HandleHDGraphicsKey(Key: Word; Shift: TShiftState): Boolean;
 begin
   Result := False;

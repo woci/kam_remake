@@ -300,7 +300,7 @@ begin
     CheckBox_LerpAnims.Hint := gResTexts[TX_SETTINGS_LERP_ANIMS_HINT];
     CheckBox_LerpAnims.OnClick := Change;
 
-    // Optional HD graphics packs from data/Sprites/hd (Docs/HD_Rendering_Plan.md 12). No translated text yet
+    // Optional HD graphics packs from data/Sprites/hd. No translated text yet
     CheckBox_HDGraphics := TKMCheckBox.Create(Panel_GFX, 10, 70, 260, 20, 'HD sprites', fntMetal);
     CheckBox_HDGraphics.Hint := 'Use the high resolution graphics, if installed. Switching takes a few seconds';
     CheckBox_HDGraphics.OnClick := Change;

@@ -46,8 +46,6 @@ type
   end;
   TKMGFXDataArray = array of TKMGFXDataItem;
 
-  TRXTypeSet = set of TRXType;
-
   // Atlas data, needed for Texture Atlas Generation
   TKMSpriteAtlasData = record
     Container: TKMBinItem;
@@ -182,12 +180,11 @@ type
     // Loaded lazily on the first switch, so it costs nothing unless used
     fAltSprites: array [TRXType] of TKMSpritePack;
     fAltGFXData: array [TRXType] of TKMGFXDataArray;
-    fAltOwnCount: array [TRXType] of Integer;
     fAltAllTilesOneAtlas: Boolean;   // AllTilesInOneTexture of the set that is not displayed
     // Per RX, never one flag for all of them: an HD pack may cover only some RX (e.g. houses only)
-    fHDLive: array [TRXType] of Boolean;   // is the displayed set of this RX the HD one
-    fHDAlt: array [TRXType] of Boolean;    // ... and the one parked in fAltSprites
-    fHDLoaded: array [TRXType] of Boolean; // ... and what the loader put into fSprites
+    fIsHDDisplayed: array [TRXType] of Boolean; // the set on screen
+    fIsHDParked: array [TRXType] of Boolean;    // the one in fAltSprites
+    fIsHDLoaded: array [TRXType] of Boolean;    // the one the loader put into fSprites
 
     function GetGenTerrainTransitions(aTerKind: TKMTerrainKind; aMaskKind: TKMTileMaskKind; aMaskType: TKMTileMaskType; aMaskSubtype: TKMTileMaskSubType): Word;
 
@@ -199,11 +196,13 @@ type
     function GetSpritesRXXFilePath(aRT: TRXType; aAlphaShadows, aHD: Boolean): string;
     procedure SetHDLoaded(aRT: TRXType; aHD: Boolean);
 
+    function IsHDWanted(aRT: TRXType): Boolean;
     function HasPackFor(aRT: TRXType; aHD: Boolean): Boolean;
     function GetHDActive: Boolean;
     function GetHDAvailable: Boolean;
     function GetHDState(aRT: TRXType): Boolean;
     function FirstSpritePx(aRT: TRXType): Integer;
+    procedure GenerateAltTransitions(aPack: TKMSpritePack);
     function LoadAltSet(aRT: TRXType; aHD: Boolean): Boolean;
     procedure SwapAltSets(aRXs: TRXTypeSet);
     procedure FreeAltSets(aRXs: TRXTypeSet);
@@ -323,9 +322,10 @@ const
   SPRITE_TYPE_EXPORT_NAME: array [TKMSpriteAtlasType] of string = ('Base', 'Mask');
   LOG_EXTRA_GFX: Boolean = True; // HD measurement (see Docs/HD_Rendering_Plan.md 0.1)
   OVERLOAD_SKIP_MASK = 'skip';
-  // HD graphics (plan 12): opt-in packs in data/Sprites/hd, switchable at runtime. Everything else stays stock
+  // HD graphics: opt-in packs in data/Sprites/hd, switchable at runtime. Everything else stays stock
   HD_SPRITES_FOLDER = 'hd';
-  HD_SWAP_RX: set of TRXType = [rxTiles, rxTrees, rxHouses, rxUnits];
+  HD_SWAP_RX: TRXTypeSet = [rxTiles, rxTrees, rxHouses, rxUnits];
+  HD_SET_NAME: array [Boolean] of string = ('stock', 'HD'); // One wording for all the HD swap log lines
 
 var
   AllTilesInOneTexture: Boolean = False;
@@ -2207,7 +2207,7 @@ begin
 end;
 
 
-// data/Sprites holds the stock (SD) packs, data/Sprites/hd the optional HD ones (Docs/HD_Rendering_Plan.md 12)
+// data/Sprites holds the stock (SD) packs, data/Sprites/hd the optional HD ones
 function TKMResSprites.GetSpritesFolder(aHD: Boolean): string;
 begin
   Result := ExeDir + 'data' + PathDelim + 'Sprites' + PathDelim;
@@ -2239,11 +2239,18 @@ begin
 end;
 
 
+// Does the player want the HD pack for this RX? Says nothing about it being installed, see HasPackFor
+function TKMResSprites.IsHDWanted(aRT: TRXType): Boolean;
+begin
+  Result := gGameSettings.HDGraphics and (aRT in HD_SWAP_RX);
+end;
+
+
 // Is there an RXA (prepacked atlases) for the set we are going to load?
 function TKMResSprites.RXAAvailable(aRT: TRXType): Boolean;
 begin
   Result := FileExists(GetSpritesRXAFilePath(aRT, False))
-            or (gGameSettings.HDGraphics and (aRT in HD_SWAP_RX) and FileExists(GetSpritesRXAFilePath(aRT, True)));
+            or (IsHDWanted(aRT) and FileExists(GetSpritesRXAFilePath(aRT, True)));
 end;
 
 
@@ -2261,10 +2268,10 @@ procedure TKMResSprites.SetHDLoaded(aRT: TRXType; aHD: Boolean);
 begin
   if not (aRT in HD_SWAP_RX) then Exit;
 
-  fHDLoaded[aRT] := aHD;
-  fHDLive[aRT] := aHD;
+  fIsHDLoaded[aRT] := aHD;
+  fIsHDDisplayed[aRT] := aHD;
 
-  gLog.AddTime(Format('HD state: %s loaded as %s', [RX_INFO[aRT].FileName, IfThen(aHD, 'HD', 'SD')]));
+  gLog.AddTime(Format('HD state: %s loaded as %s', [RX_INFO[aRT].FileName, HD_SET_NAME[aHD]]));
 end;
 
 
@@ -2385,19 +2392,19 @@ end;
 //Try to load RXX first, then RX, then use Folder
 function TKMResSprites.LoadSprites(aRT: TRXType; aAlphaShadows: Boolean): Boolean;
 var
-  hd: Boolean;
+  isHD: Boolean;
   rxxFile: string;
 begin
   gLog.AddTime('Load Sprites started');
   Result := False;
 
   // HD pack if the player asked for it and it exists, stock otherwise
-  hd := gGameSettings.HDGraphics and (aRT in HD_SWAP_RX) and (GetSpritesRXXFilePath(aRT, aAlphaShadows, True) <> '');
-  rxxFile := GetSpritesRXXFilePath(aRT, aAlphaShadows, hd);
+  isHD := IsHDWanted(aRT) and (GetSpritesRXXFilePath(aRT, aAlphaShadows, True) <> '');
+  rxxFile := GetSpritesRXXFilePath(aRT, aAlphaShadows, isHD);
   if rxxFile = '' then Exit;
 
   fSprites[aRT].LoadFromRXXFile(rxxFile);
-  SetHDLoaded(aRT, hd);
+  SetHDLoaded(aRT, isHD);
   Result := True;
 
   fSprites[aRT].OverloadRXDataFromFolder(ExeDir + 'Sprites' + PathDelim, nil); // Legacy support
@@ -2428,18 +2435,18 @@ end;
 
 function TKMResSprites.LoadRXASprites(aRT: TRXType): Boolean;
 var
-  hd: Boolean;
+  isHD: Boolean;
   rxaFile: string;
 begin
   Result := False;
 
-  hd := gGameSettings.HDGraphics and (aRT in HD_SWAP_RX) and FileExists(GetSpritesRXAFilePath(aRT, True));
-  rxaFile := GetSpritesRXAFilePath(aRT, hd);
+  isHD := IsHDWanted(aRT) and FileExists(GetSpritesRXAFilePath(aRT, True));
+  rxaFile := GetSpritesRXAFilePath(aRT, isHD);
 
   if not FileExists(rxaFile) then Exit;
 
   fSprites[aRT].LoadFromRXAFile(rxaFile);
-  SetHDLoaded(aRT, hd);
+  SetHDLoaded(aRT, isHD);
 
   Result := True;
 end;
@@ -2451,58 +2458,66 @@ begin
 end;
 
 
-// Load the "other" set of aRT (HD if SD is live, SD if HD is live) into fAltSprites / fAltGFXData (plan 12).
+// Transition tiles are generated from the base tiles, so each tileset needs its own generation pass.
+// The index tables it fills are expected to be the same for both sets, since the generated ids start after
+// the base tiles and both tilesets hold the same number of them. Verify it: a shifted start id would
+// silently point the map's terrain ids at the wrong transitions
+procedure TKMResSprites.GenerateAltTransitions(aPack: TKMSpritePack);
+var
+  genTexIdStartWas: Integer;
+begin
+  genTexIdStartWas := fGenTexIdStartI;
+  GenerateTerrainTransitions(aPack);
+
+  if (genTexIdStartWas <> 0) and (genTexIdStartWas <> fGenTexIdStartI) then
+    raise Exception.CreateFmt('HD swap: tileset sprite count differs (generated tiles start at %d, was %d)',
+                              [fGenTexIdStartI, genTexIdStartWas]);
+end;
+
+
+// Load the "other" set of aRT (HD if SD is live, SD if HD is live) into fAltSprites / fAltGFXData.
 // Modding graphics overloads are NOT applied here: both sides come straight from the packed files
 function TKMResSprites.LoadAltSet(aRT: TRXType; aHD: Boolean): Boolean;
 var
   altPack: TKMSpritePack;
   liveGFX: TKMGFXDataArray;
   rxaFile, rxxFile: string;
-  useRXA: Boolean;
+  isRXASource: Boolean;
   allTilesOneAtlasLive: Boolean;
-  genTexIdStartWas: Integer;
 begin
   Result := False;
 
   rxaFile := GetSpritesRXAFilePath(aRT, aHD);
   rxxFile := GetSpritesRXXFilePath(aRT, fAlphaShadows, aHD);
   // Tiles are always packed from RXX (plan 10), the other RX prefer the ready-made atlases
-  useRXA := fAlphaShadows and (aRT <> rxTiles) and FileExists(rxaFile);
+  isRXASource := fAlphaShadows and (aRT <> rxTiles) and FileExists(rxaFile);
 
-  if not useRXA and (rxxFile = '') then
+  if not isRXASource and (rxxFile = '') then
   begin
-    gLog.AddTime(Format('HD swap: no %s source for %s', [IfThen(aHD, 'HD', 'SD'), RX_INFO[aRT].FileName]));
+    gLog.AddTime(Format('HD swap: no %s source for %s', [HD_SET_NAME[aHD], RX_INFO[aRT].FileName]));
     Exit;
   end;
 
-  gLog.AddTime('HD swap: loading ' + IfThen(useRXA, rxaFile, rxxFile));
+  if isRXASource then
+    gLog.AddTime('HD swap: loading ' + rxaFile)
+  else
+    gLog.AddTime('HD swap: loading ' + rxxFile);
 
-  // Packs write their texture coords into the global gGFXData[aRT] (keyed by RX type, not by pack instance),
-  // so park the live array while the new pack fills a fresh one, then put it back.
-  // Nothing may render while it is parked - that is why the progress callback runs between RX, not inside here
+  // Packs write their texture coords into the global gGFXData[aRT], so park the live array while the
+  // new pack fills a fresh one. Nothing may render while it is parked
   altPack := TKMSpritePack.Create(aRT);
   try
     liveGFX := gGFXData[aRT];
     gGFXData[aRT] := nil;
     allTilesOneAtlasLive := AllTilesInOneTexture;
     try
-      if useRXA then
+      if isRXASource then
         altPack.LoadFromRXAAndGenTextures(rxaFile)
       else
       begin
         altPack.LoadFromRXXFile(rxxFile);
-        // Transition tiles are generated from the base tiles, so each tileset needs its own generation pass.
-        // The index tables it fills are expected to be the same for both sets, since the generated ids start
-        // after the base tiles and both tilesets hold the same number of them. Verify it: a shifted start id
-        // would silently point the map's terrain ids at the wrong transitions
         if aRT = rxTiles then
-        begin
-          genTexIdStartWas := fGenTexIdStartI;
-          GenerateTerrainTransitions(altPack);
-          if (genTexIdStartWas <> 0) and (genTexIdStartWas <> fGenTexIdStartI) then
-            raise Exception.CreateFmt('HD swap: tileset sprite count differs (generated tiles start at %d, was %d)',
-                                      [fGenTexIdStartI, genTexIdStartWas]);
-        end;
+          GenerateAltTransitions(altPack);
         {$IFNDEF NO_OGL}
         altPack.MakeGFX(fAlphaShadows or (aRT = rxTiles));
         {$ENDIF}
@@ -2534,9 +2549,8 @@ begin
     Exit;
   end;
 
-  fAltOwnCount[aRT] := altPack.fRXData.Count;
   fAltSprites[aRT] := altPack;
-  fHDAlt[aRT] := aHD;
+  fIsHDParked[aRT] := aHD;
   Result := True;
 end;
 
@@ -2582,9 +2596,9 @@ begin
     end;
 
     // The two sets exchanged roles
-    tmpBool := fHDLive[RT];
-    fHDLive[RT] := fHDAlt[RT];
-    fHDAlt[RT] := tmpBool;
+    tmpBool := fIsHDDisplayed[RT];
+    fIsHDDisplayed[RT] := fIsHDParked[RT];
+    fIsHDParked[RT] := tmpBool;
   end;
 end;
 
@@ -2608,18 +2622,18 @@ begin
 
   for RT in HD_SWAP_RX do
   begin
-    if fHDLive[RT] = aHD then Continue; // Already showing the wanted set
+    if fIsHDDisplayed[RT] = aHD then Continue; // Already showing the wanted set
 
     // An HD set may cover only some RX (e.g. houses only). Those without one stay as they are
     if not HasPackFor(RT, aHD) then
     begin
       gLog.AddTime(Format('HD swap: no %s pack for %s, it stays as it is',
-                          [IfThen(aHD, 'HD', 'stock'), RX_INFO[RT].FileName]));
+                          [HD_SET_NAME[aHD], RX_INFO[RT].FileName]));
       Continue;
     end;
 
     // A parked set of the wrong kind is of no use (can happen after a partial switch)
-    if (fAltSprites[RT] <> nil) and (fHDAlt[RT] <> aHD) then
+    if (fAltSprites[RT] <> nil) and (fIsHDParked[RT] <> aHD) then
       FreeAltSets([RT]);
 
     if fAltSprites[RT] = nil then
@@ -2644,10 +2658,10 @@ begin
   if toSwap = [] then Exit;
 
   SwapAltSets(toSwap);
-  // Log the real texture size of a live sprite too: that is what is on screen, independent of the flags above
+  // The px sizes come from live sprites: that is what is on screen, independent of the flags
   gLog.AddTime(Format('HD swap: houses = %s (%d px), tiles = %s (%d px)',
-                      [IfThen(fHDLive[rxHouses], 'HD', 'SD'), FirstSpritePx(rxHouses),
-                       IfThen(fHDLive[rxTiles], 'HD', 'SD'), FirstSpritePx(rxTiles)]));
+                      [HD_SET_NAME[fIsHDDisplayed[rxHouses]], FirstSpritePx(rxHouses),
+                       HD_SET_NAME[fIsHDDisplayed[rxTiles]], FirstSpritePx(rxTiles)]));
   Result := True;
 end;
 
@@ -2664,7 +2678,7 @@ begin
 
     {$IFNDEF NO_OGL}
     if gRender <> nil then
-      for I := 1 to Min(fAltOwnCount[RT], High(fAltGFXData[RT])) do
+      for I := 1 to High(fAltGFXData[RT]) do
       begin
         if fAltGFXData[RT, I].Tex.TexID <> 0 then
           TKMRender.DeleteTexture(fAltGFXData[RT, I].Tex.TexID);
@@ -2675,7 +2689,6 @@ begin
 
     FreeAndNil(fAltSprites[RT]);
     fAltGFXData[RT] := nil;
-    fAltOwnCount[RT] := 0;
     gLog.AddTime('HD swap: released the hidden ' + RX_INFO[RT].FileName + ' set');
   end;
 end;
@@ -2691,14 +2704,14 @@ begin
   // Put the sets the loader owns back on screen before we free the other ones
   toSwap := [];
   for RT in HD_SWAP_RX - [rxTiles] do
-    if fHDLive[RT] <> fHDLoaded[RT] then
+    if fIsHDDisplayed[RT] <> fIsHDLoaded[RT] then
       toSwap := toSwap + [RT];
 
   SwapAltSets(toSwap);
   FreeAltSets(HD_SWAP_RX - [rxTiles]);
 
   for RT in HD_SWAP_RX - [rxTiles] do
-    fHDLive[RT] := fHDLoaded[RT];
+    fIsHDDisplayed[RT] := fIsHDLoaded[RT];
 end;
 
 
@@ -2713,7 +2726,7 @@ begin
   // What is displayed is now the only set we have. The game RX get rebuilt from the setting, which the
   // switch keeps in sync with the display, and the tiles are not reloaded at all - so this stays true
   for RT in HD_SWAP_RX do
-    fHDLoaded[RT] := fHDLive[RT];
+    fIsHDLoaded[RT] := fIsHDDisplayed[RT];
 end;
 
 
@@ -2723,7 +2736,7 @@ var
   RT: TRXType;
 begin
   for RT in HD_SWAP_RX do
-    if fHDLive[RT] then Exit(True);
+    if fIsHDDisplayed[RT] then Exit(True);
 
   Result := False;
 end;
@@ -2743,7 +2756,7 @@ end;
 
 function TKMResSprites.GetHDState(aRT: TRXType): Boolean;
 begin
-  Result := fHDLive[aRT];
+  Result := fIsHDDisplayed[aRT];
 end;
 
 

@@ -113,7 +113,7 @@ type
 
     //Misc
     fAsyncGameResLoader: Boolean;
-    fHDGraphics: Boolean; // Load the optional HD packs from data/Sprites/hd (Docs/HD_Rendering_Plan.md 12)
+    fHDGraphics: Boolean; // Load the optional HD packs from data/Sprites/hd
 
     //Menu
     fMenu_FavouriteMapsStr: UnicodeString;
