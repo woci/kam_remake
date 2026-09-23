@@ -176,11 +176,11 @@ uses
   KM_HandsCollection,
   KM_GameSavePoints,
   KM_Cursor, KM_ResTexts, KM_ResKeys, KM_ResTypes,
-  KM_InterfaceGamePlay, KM_RenderPool, KM_GameAppSettings,
-  KM_IoGraphicUtils, KM_Settings,
+  KM_IoGraphicUtils, KM_Settings, KM_GameAppSettings,
   KM_Saves, KM_CommonUtils, KM_CommonShellUtils,
   {$IFDEF DBG_RNG_SPY}KM_RandomChecks,{$ENDIF}
-  KM_DevPerfLog, KM_DevPerfLogTypes;
+  KM_DevPerfLog, KM_DevPerfLogTypes,
+  KM_InterfaceGamePlay, KM_RenderPool;
 
 
 { TKMGameApp }
@@ -681,7 +681,7 @@ begin
   FreeThenNil(gGame);
 
   // Leaving the map: what the player switched to stays on screen (and in the settings), the other
-  // graphics set is freed (Docs/HD_Rendering_Plan.md 12)
+  // graphics set is freed
   gRes.Sprites.ReleaseHiddenSets;
 
   gLog.AddTime('Gameplay ended - ' + GetEnumName(TypeInfo(TKMGameResultMsg), Integer(aMsg)) + ' /' + aTextMsg);
@@ -708,9 +708,10 @@ begin
   if (gGame <> nil) and (gGame.ActiveInterface is TKMGamePlayInterface) then
     gamePlayUI := TKMGamePlayInterface(gGame.ActiveInterface);
 
-  // Loading blocks the main thread for seconds. Without pausing, the game would count those seconds as
-  // game time and then race through the missed ticks (TKMGame.GetTicksBehindCnt works from real time).
-  // Restoring IsPaused also resets the tick counters (SetIsPaused -> UpdateTickCounters)
+  // Loading blocks the main thread for seconds, which the game would count as game time and then race
+  // through the missed ticks (TKMGame.GetTicksBehindCnt works from real time). Pausing from presentation
+  // code is fine here: multiplayer is already excluded above, the engine pauses the same way for its own
+  // dialogs, and restoring IsPaused resets the tick counters (SetIsPaused -> UpdateTickCounters)
   wasPaused := False;
   if gGame <> nil then
   begin

@@ -98,7 +98,7 @@ type
   public
     constructor Create;
     destructor Destroy; override;
-    // After the HD/SD tileset swap the UV lookup and the cached VBO content are stale (Docs/HD_Rendering_Plan.md 12)
+    // After the HD/SD tileset swap the UV lookup and the cached VBO content are stale
     procedure RebuildTileUVLookup;
     property ClipRect: TKMRect read fClipRect write fClipRect;
     procedure RenderBase(aAnimStep: Integer; aFOW: TKMFogOfWarCommon);
