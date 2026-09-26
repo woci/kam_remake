@@ -245,7 +245,7 @@ type
     property FileName[aRX: TRXType]: string read GetRXFileName;
 
     // Switch the displayed graphics (terrain, trees, houses, units) between the stock and the HD packs.
-    // aOnProgress is called with the RX name before each (slow) load. Returns True if anything changed
+    // aOnProgress is called with the translated RX name before each (slow) load. Returns True if anything changed
     function SetHDGraphics(aHD: Boolean; aOnProgress: TUnicodeStringEvent): Boolean;
     procedure ReleaseHiddenSets;
     function RXAAvailable(aRT: TRXType): Boolean;
@@ -2676,7 +2676,7 @@ begin
     if fAltSprites[RT] = nil then
     begin
       if Assigned(aOnProgress) then
-        aOnProgress(RX_INFO[RT].FileName);
+        aOnProgress(gResTexts[RX_INFO[RT].LoadingTextID]);
       try
         if not LoadAltSet(RT, aHD) then Continue;
       except

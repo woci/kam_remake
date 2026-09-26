@@ -3626,13 +3626,13 @@ begin
     begin
       if hdList <> '' then
         hdList := hdList + ', ';
-      hdList := hdList + RX_INFO[RT].FileName;
+      hdList := hdList + gResTexts[RX_INFO[RT].LoadingTextID];
     end;
 
   if hdList = '' then
-    Label_HDState.Caption := 'Graphics: original'
+    Label_HDState.Caption := gResTexts[TX_GAMEPLAY_GRAPHICS_ORIGINAL]
   else
-    Label_HDState.Caption := Format('Graphics: HD (%s)', [hdList]);
+    Label_HDState.Caption := Format(gResTexts[TX_GAMEPLAY_GRAPHICS_HD], [hdList]);
 
   fHDStateShown := gRes.Sprites.HDActive;
   fHDStateShownAt := TimeGet;
@@ -3656,8 +3656,7 @@ end;
 // Draw one frame of the loading cover. Called between RX loads, never while a set is half loaded
 procedure TKMGamePlayInterface.GraphicsLoadingStep(const aRXName: UnicodeString);
 begin
-  // No translated text for this yet, the switch is a power user feature
-  Label_HDLoading.Caption := Trim(Format('Loading graphics ... %s', [aRXName]));
+  Label_HDLoading.Caption := Trim(Format(gResTexts[TX_GAMEPLAY_GRAPHICS_LOADING], [aRXName]));
   gGameApp.Render;
 end;
 
