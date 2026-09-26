@@ -248,9 +248,14 @@ end;
 procedure TKMRenderPool.ApplyTransform;
 var
   viewportPosRound: TKMPointF;
+  pxPerTile: Single;
 begin
-  //Need to round the viewport position so we only translate by whole pixels
-  viewportPosRound := RoundToTilePixel(fViewport.Position);
+  // Round the viewport position to whole screen pixels at the current zoom. RoundToTilePixel rounds to 1/CELL_SIZE_PX
+  // of a tile, which is a whole pixel only at zoom 1: at any other zoom panning moved the map by fractional pixels,
+  // the nearest-filtered terrain was resampled differently every frame and shimmered
+  pxPerTile := fViewport.Zoom * CELL_SIZE_PX;
+  viewportPosRound.X := Round(fViewport.Position.X * pxPerTile) / pxPerTile;
+  viewportPosRound.Y := Round(fViewport.Position.Y * pxPerTile) / pxPerTile;
 
   glLoadIdentity; // Reset The View
 
