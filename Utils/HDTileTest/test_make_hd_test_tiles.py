@@ -158,6 +158,56 @@ class UpscaleTests(unittest.TestCase):
         self.assertTrue(any(0 < v < 255 for v in values), "no blended pixels along the diagonal")
 
 
+class TileContextTests(unittest.TestCase):
+    """upscale_tile: the tile border must be as soft as the inside (Docs/HD_Rendering_Plan.md 13.3.2)."""
+    GREY, GREEN, YELLOW = (128, 128, 128, 255), (0, 200, 0, 255), (250, 220, 0, 255)
+    N = 4
+
+    def solid(self, px):
+        return (self.N, self.N, rgba(*[px] * (self.N * self.N)), None)
+
+    def sprites(self):
+        # 1-based ids: plain grass is tile 0, plain coast sand tile 32, the transition under test tile 70
+        return {m.BASE_TILE["tkGrass"] + 1: self.solid(self.GREEN),
+                m.BASE_TILE["tkCoastSand"] + 1: self.solid(self.YELLOW),
+                71: self.solid(self.GREY)}
+
+    def test_wrap_axis_table_reads_the_opposite_edge(self):
+        tab = m._axis_table(5, 4, wrap=True)
+        self.assertEqual(len(tab), 20)
+        self.assertEqual(tab[0][:2], (4, 0), "first output pixel blends the last and the first source pixel")
+        self.assertEqual(tab[-1][:2], (4, 0), "last output pixel blends the last and the first source pixel")
+
+    def test_wrap_blends_the_border_with_the_opposite_edge(self):
+        W, H, out = m.upscale_bilinear(2, 1, rgba((0, 0, 0, 255), (255, 255, 255, 255)), 4, wrap=True)
+        self.assertTrue(0 < out[0] < 255, "clamped would keep pure black here")
+        self.assertTrue(0 < out[(W - 1) * 4] < 255, "clamped would keep pure white here")
+
+    def test_pure_tile_is_wrapped(self):
+        corners = {0: ["tkGrass"] * 4}
+        *_, how = m.upscale_tile(0, self.N, self.N, self.solid(self.GREEN)[2], 4, corners, self.sprites())
+        self.assertEqual(how, "wrap")
+
+    def test_transition_tile_blends_into_the_terrain_at_its_corners(self):
+        corners = {70: ["tkCoastSand", "tkCoastSand", "tkGrass", "tkGrass"]}  # sand on top, grass below
+        W, H, out, how = m.upscale_tile(70, self.N, self.N, self.solid(self.GREY)[2], 4, corners, self.sprites())
+        self.assertEqual(how, "context")
+        self.assertEqual((W, H), (16, 16))
+        top, bottom, middle = out[8 * 4:8 * 4 + 4], out[(15 * W + 8) * 4:(15 * W + 8) * 4 + 4], out[(8 * W + 8) * 4:(8 * W + 8) * 4 + 4]
+        self.assertEqual(tuple(middle), self.GREY, "the inside stays the tile itself")
+        self.assertGreater(top[0], self.GREY[0], "the top border leans towards the yellow sand above")
+        self.assertGreater(bottom[1], self.GREY[1], "the bottom border leans towards the green grass below")
+
+    def test_tiles_without_usable_context_stay_clamped(self):
+        sprites = self.sprites()
+        grey = self.solid(self.GREY)[2]
+        for tile0, corners in ((70, {}),                                           # not in tiles.json
+                               (70, {70: ["tkCustom", "tkGrass", "tkGrass", "tkGrass"]}),  # custom corner
+                               (4949, {4949: ["tkGrass", "tkGrass", "tkSand", "tkSand"]})):  # a layer mask
+            *_, how = m.upscale_tile(tile0, self.N, self.N, grey, 4, corners, sprites)
+            self.assertEqual(how, "clamp", "tile %d" % tile0)
+
+
 class BleedTests(unittest.TestCase):
     def test_bleed_fills_transparent_neighbours_only(self):
         # 3x1: opaque red | transparent lilac | transparent lilac

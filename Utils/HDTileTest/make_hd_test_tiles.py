@@ -27,6 +27,8 @@ External upscaler (e.g. Real-ESRGAN) round trip:
   python make_hd_test_tiles.py --rxx data\\Sprites\\Houses_a.rxx --rx 2 --import-hd esrgan_out --out "Modding graphics/hd_houses_esrgan"
 """
 import argparse
+import json
+import math
 import os
 import struct
 import sys
@@ -36,6 +38,70 @@ import zlib
 MASK_IDS = set(range(4949, 4953)) | set(range(4959, 4963)) | set(range(4969, 4973)) \
          | set(range(4979, 4983)) | set(range(4989, 4993))
 MASK_IDS_ARG = ",".join(str(i) for i in sorted(MASK_IDS))
+
+# TKMTerrainKind (in enum order) and BASE_TERRAIN, the plain 0-based tile of each kind (KM_ResTilesetTypes.pas)
+TERRAIN_KINDS = ("tkCustom", "tkGrass", "tkMoss", "tkPaleGrass", "tkCoastSand", "tkGrassSand1", "tkGrassSand2",
+                 "tkGrassSand3", "tkSand", "tkGrassDirt", "tkDirt", "tkCobbleStone", "tkGrassyWater", "tkSwamp", "tkIce",
+                 "tkSnowOnGrass", "tkSnowOnDirt", "tkSnow", "tkDeepSnow", "tkStone", "tkGoldMount", "tkIronMount",
+                 "tkAbyss", "tkGravel", "tkCoal", "tkGold", "tkIron", "tkWater", "tkFastWater", "tkLava")
+BASE_TERRAIN = (0, 0, 8, 17, 32, 26, 27, 28, 29, 34, 35, 215, 48, 40, 44, 315, 47, 46, 45, 132, 159, 164, 245, 20, 155,
+                147, 151, 192, 209, 7)
+BASE_TILE = dict(zip(TERRAIN_KINDS, BASE_TERRAIN))
+TILE_CONTEXT_PAD = 2  # SD px of neighbour context around a transition tile; bilinear reads 1
+
+
+def load_tile_corners(path):
+    """{0-based tile id: [terrain kind of the TL, TR, BR, BL corner]} from data/defines/tiles.json."""
+    with open(path, encoding="utf-8-sig") as f:
+        return {t["ID"]: t["CornersTerKinds"] for t in json.load(f)["Tiles"] if t.get("CornersTerKinds")}
+
+
+def upscale_tile(tile0, w, h, rgba, scale, corners, sprites):
+    """Upscale one terrain tile so that its border is as soft as its inside (Docs/HD_Rendering_Plan.md 13.3.2).
+
+    Upscaling every tile on its own with a clamped border leaves a hard one-pixel step on every tile border,
+    while the inside gets soft - the tile grid shows. What the tile needs next to it depends on the tile:
+      pure terrain (all 4 corners one kind): wrap around, the tile continues into itself
+      transition (2+ kinds): pad each side with the plain tile of the terrain at the nearest corner
+      anything else (no terrain kind, tkCustom corner, a mask): clamped, as before
+    Returns (W, H, bytes, how) with how in 'wrap' / 'context' / 'clamp'."""
+    kinds = corners.get(tile0)
+    if not kinds or "tkCustom" in kinds or tile0 in MASK_IDS:
+        return upscale_bilinear(w, h, rgba, scale) + ("clamp",)
+    if len(set(kinds)) == 1:
+        return upscale_bilinear(w, h, rgba, scale, wrap=True) + ("wrap",)
+
+    # The plain tile of each corner's terrain, same size as this one, or we cannot use it as context
+    bases = []
+    for kind in kinds:
+        base = sprites.get(BASE_TILE[kind] + 1)
+        if base is None or (base[0], base[1]) != (w, h):
+            return upscale_bilinear(w, h, rgba, scale) + ("clamp",)
+        bases.append(base[2])
+
+    pad = TILE_CONTEXT_PAD
+    pw, ph = w + 2 * pad, h + 2 * pad
+    src = bytearray(pw * ph * 4)
+    for y in range(ph):
+        ty = y - pad
+        for x in range(pw):
+            tx = x - pad
+            if 0 <= tx < w and 0 <= ty < h:
+                px = rgba
+            else:
+                # 0 = TL, 1 = TR, 2 = BR, 3 = BL (TKMTerrain.GetVerticeTerKinds)
+                right, bottom = tx >= w // 2, ty >= h // 2
+                px = bases[(2 if right else 3) if bottom else (1 if right else 0)]
+            i = ((ty % h) * w + tx % w) * 4
+            src[(y * pw + x) * 4:(y * pw + x) * 4 + 4] = px[i:i + 4]
+
+    big_w, _, big = upscale_bilinear(pw, ph, bytes(src), scale)
+    W, H, off = w * scale, h * scale, pad * scale
+    out = bytearray(W * H * 4)
+    for y in range(H):
+        start = ((y + off) * big_w + off) * 4
+        out[y * W * 4:(y + 1) * W * 4] = big[start:start + W * 4]
+    return W, H, bytes(out), "context"
 
 
 def read_rxx(path, with_masks=False, units=False):
@@ -199,11 +265,16 @@ def bleed_colors(w, h, rgba, passes):
     return bytes(px)
 
 
-def _axis_table(n, scale):
-    """Per output coordinate: (source index 0, source index 1, weight of index 1 in 0..256)."""
+def _axis_table(n, scale, wrap=False):
+    """Per output coordinate: (source index 0, source index 1, weight of index 1 in 0..256).
+    wrap: past the border the image continues with its opposite edge instead of repeating its own edge pixel."""
     tab = []
     for o in range(n * scale):
         s = (o + 0.5) / scale - 0.5
+        if wrap:
+            i0 = math.floor(s)
+            tab.append((i0 % n, (i0 + 1) % n, int(round((s - i0) * 256))))
+            continue
         if s < 0:
             s = 0.0
         i0 = min(int(s), n - 1)
@@ -212,11 +283,11 @@ def _axis_table(n, scale):
     return tab
 
 
-def upscale_bilinear(w, h, data, scale, channels=4):
+def upscale_bilinear(w, h, data, scale, channels=4, wrap=False):
     """Separable bilinear upscale of an interleaved `channels`-byte image. Returns (W, H, bytes)."""
     W, H = w * scale, h * scale
-    xt = _axis_table(w, scale)
-    yt = _axis_table(h, scale)
+    xt = _axis_table(w, scale, wrap)
+    yt = _axis_table(h, scale, wrap)
     src = memoryview(data)
 
     # Horizontal pass: w -> W on every source row
@@ -506,6 +577,11 @@ def main():
     ap.add_argument("--no-masks", action="store_true", help="do not write X_NNNNm.png team colour masks")
     ap.add_argument("--filter", choices=("bilinear", "xbr"), default="bilinear",
                     help="bilinear = smooth blur-up; xbr = pixel-art edge-aware scaler (crisp edges, power-of-two scale)")
+    ap.add_argument("--tiles-json", default=os.path.join("data", "defines", "tiles.json"),
+                    help="terrain kind of every tile corner; tiles (--rx 7, bilinear) use it to upscale with their "
+                         "neighbours in mind, so the tile grid does not show")
+    ap.add_argument("--no-tile-context", action="store_true",
+                    help="upscale every tile on its own with a clamped border (the old behaviour, shows the tile grid)")
     ap.add_argument("--export-sd", metavar="DIR", default="",
                     help="write the selected sprites at ORIGINAL size (colour-bled) into DIR for an external upscaler "
                          "(e.g. Real-ESRGAN); nothing is written to --out")
@@ -532,6 +608,11 @@ def main():
         sprites = read_rxx(args.rxx, with_masks=True, units=is_units)
     out_dir = args.export_sd if args.export_sd else args.out
     os.makedirs(out_dir, exist_ok=True)
+
+    corners = {}
+    if args.rx == 7 and args.filter == "bilinear" and not args.no_tile_context:
+        corners = load_tile_corners(args.tiles_json)
+    tile_upscale_kinds = {"wrap": 0, "context": 0, "clamp": 0}
 
     done = 0
     masks = 0
@@ -569,6 +650,9 @@ def main():
                                  % (src, W, H, w * args.scale, h * args.scale, args.scale, w, h))
         elif args.filter == "xbr":
             W, H, big = upscale_xbr(w, h, rgba, args.scale)
+        elif corners:
+            W, H, big, how = upscale_tile(tile0, w, h, rgba, args.scale, corners, sprites)
+            tile_upscale_kinds[how] += 1
         else:
             W, H, big = upscale_bilinear(w, h, rgba, args.scale)
         if args.mask_blur and tile0 in MASK_IDS:
@@ -596,6 +680,9 @@ def main():
     else:
         print("Wrote %d sprites (x%d, %d with team colour mask) to %s, skipped %d, source sprites: %d"
               % (done, args.scale, masks, args.out, len(skip & set(s - 1 for s in sprites)), len(sprites)))
+        if corners:
+            print("Tiles: %(wrap)d pure (wrapped), %(context)d transitions (neighbour context), "
+                  "%(clamp)d other (clamped)" % tile_upscale_kinds)
 
 
 if __name__ == "__main__":

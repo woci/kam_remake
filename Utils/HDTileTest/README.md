@@ -31,6 +31,13 @@ Trees and houses take under a minute, units (8696 sprites) about 3 minutes.
 This is the recommended route for terrain; the others smear the grass
 texture.
 
+Tiles are not upscaled in isolation: a tile of one terrain kind wraps around
+at its border, a transition tile gets a thin frame of the plain tile of the
+terrain at each corner (`data\defines\tiles.json`, `CornersTerKinds`). Without
+this every tile border stays a hard one-pixel step while the inside gets soft,
+and the tile grid shows (`Docs/HD_Rendering_Plan.md` section 13).
+`--no-tile-context` gives the old behaviour.
+
 ## Route 2: xBR (crisp pixel-art edges, slow)
 
 Same commands with `--filter xbr`:
@@ -181,3 +188,26 @@ The stock files are never modified.
 | `--skip a,b,c` | keep these 0-based ids at the original resolution (e.g. tile transition masks 4949–4992) |
 | `--max-id N` | only ids up to N (for a partial set) |
 | `--mask-blur R` | blur tile transition masks (cosmetic experiment, not recommended) |
+| `--tiles-json PATH` | corner terrain kinds for the tile context (default `data\defines\tiles.json`) |
+| `--no-tile-context` | upscale every tile on its own with a clamped border (old behaviour, the tile grid shows) |
+
+## Checking an HD tile set
+
+Two helper scripts, both read the stock `data\Sprites\Tileset.rxx` and a folder
+of HD tiles (`7_NNNN.png`). Background: `Docs/HD_Rendering_Plan.md` section 13.
+
+```
+python Utils\HDTileTest\measure_tile_seams.py     --hd "Modding graphics\hd_tiles_test_skip"
+python Utils\HDTileTest\make_transition_panels.py --hd "Modding graphics\hd_tiles_test_skip" --out tile_panels
+```
+
+`measure_tile_seams.py` prints how much harder the step across a tile border
+is than the steps inside a tile (median over the tiles). About 1 means no
+visible grid. Add `--pure-only --max-id 600` to measure only the tiles of one
+terrain kind: a transition tile laid next to itself is not a real
+neighbourhood. On those the stock tiles give ~1.0, the old isolated bilinear
+set ~4.4, the current one ~1.1.
+
+`make_transition_panels.py` writes comparison images: hand-drawn transition
+tiles in SD and HD, the 20 layer masks, and one generated layer tile with the
+mask sampled nearest (the engine before plan 13.5) and bilinear (since).
