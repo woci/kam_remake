@@ -1,5 +1,5 @@
 """
-Measure how visible the tile grid is in an HD tile set (Docs/HD_Rendering_Plan.md 13).
+Measure how visible the tile grid is in an HD tile set.
 
 Every tile is laid next to itself (right edge against left edge, bottom against top), which is how a
 field of one terrain kind looks. For each tile the mean brightness step across that border is divided

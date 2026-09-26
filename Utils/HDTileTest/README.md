@@ -35,7 +35,7 @@ Tiles are not upscaled in isolation: a tile of one terrain kind wraps around
 at its border, a transition tile gets a thin frame of the plain tile of the
 terrain at each corner (`data\defines\tiles.json`, `CornersTerKinds`). Without
 this every tile border stays a hard one-pixel step while the inside gets soft,
-and the tile grid shows (`Docs/HD_Rendering_Plan.md` section 13).
+and the tile grid shows.
 `--no-tile-context` gives the old behaviour.
 
 ## Route 2: xBR (crisp pixel-art edges, slow)
@@ -194,7 +194,8 @@ The stock files are never modified.
 ## Checking an HD tile set
 
 Two helper scripts, both read the stock `data\Sprites\Tileset.rxx` and a folder
-of HD tiles (`7_NNNN.png`). Background: `Docs/HD_Rendering_Plan.md` section 13.
+of HD tiles (`7_NNNN.png`). They check the two things that make HD terrain look
+wrong: a visible tile grid and blocky transitions between terrain kinds.
 
 ```
 python Utils\HDTileTest\measure_tile_seams.py     --hd "Modding graphics\hd_tiles_test_skip"
@@ -210,4 +211,4 @@ set ~4.4, the current one ~1.1.
 
 `make_transition_panels.py` writes comparison images: hand-drawn transition
 tiles in SD and HD, the 20 layer masks, and one generated layer tile with the
-mask sampled nearest (the engine before plan 13.5) and bilinear (since).
+mask sampled nearest (the old engine) and bilinear (the engine now).

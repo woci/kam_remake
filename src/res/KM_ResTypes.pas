@@ -308,7 +308,7 @@ type
     Size: array of record X,Y: Word; end;           // Real texture pixels (atlas packing, UV math, masks use this)
     Pivot: array of record X,Y: SmallInt; end;      // Real texture pixels
     SizeNoShadow: array of record Left, Top, Right, Bottom: SmallInt; end; //Image object (without shadow) rect in the image sizes
-    // HD multiplier per sprite (Docs/HD_Rendering_Plan.md 2.1): 1.0 = original, 4.0 = 4x replacement.
+    // HD multiplier per sprite: 1.0 = original, 4.0 = 4x replacement.
     // Logical (world / UI) size = pixel / Scale. Not stored in RXX yet, derived on PNG overload.
     Scale: array of Single;
     {unused in RXX} Data: array of array of Byte; //Used for RXX utils (Packer / Editor)

@@ -1,5 +1,5 @@
 """
-Generate upscaled test sprites for the HD rendering work (Docs/HD_Rendering_Plan.md).
+Generate upscaled test sprites for the HD rendering work.
 
 Reads an RXX (Tileset, Trees, Houses, Units, ...), upscales every sprite by SCALE (bilinear) and writes
 X_NNNN.png files into an overload folder under "Modding graphics", where the game picks them up at
@@ -57,7 +57,7 @@ def load_tile_corners(path):
 
 
 def upscale_tile(tile0, w, h, rgba, scale, corners, sprites):
-    """Upscale one terrain tile so that its border is as soft as its inside (Docs/HD_Rendering_Plan.md 13.3.2).
+    """Upscale one terrain tile so that its border is as soft as its inside.
 
     Upscaling every tile on its own with a clamped border leaves a hard one-pixel step on every tile border,
     while the inside gets soft - the tile grid shows. What the tile needs next to it depends on the tile:

@@ -1,12 +1,12 @@
 """
-Comparison images for the terrain transitions in HD (Docs/HD_Rendering_Plan.md 13).
+Comparison images for the terrain transitions in HD.
 
 Writes into --out:
   1_handdrawn_sd.png / 1_handdrawn_hd.png  hand-drawn transition tiles of the original tileset, SD and HD
   2_masks.png                              the 20 layer masks: Softest, Soft, Soft2, Hard (pixel), Gradient (alpha)
   3_layer.png                              one generated layer tile (grass + coast sand through a Soft2 straight
-                                           mask): SD | HD with the mask sampled nearest (the engine before
-                                           plan 13.5) | HD with the mask sampled bilinear (the engine since)
+                                           mask): SD | HD with the mask sampled nearest (the old engine) |
+                                           HD with the mask sampled bilinear (the engine now)
 
 Usage (from the repository root):
   python Utils\\HDTileTest\\make_transition_panels.py --hd "Modding graphics\\hd_tiles_test_skip" --out tile_panels
@@ -121,7 +121,7 @@ def main():
     W, H, grass_hd = hd_tile(GRASS)
     _, _, sand_hd = hd_tile(COAST_SAND)
     scale = W // w
-    a_nearest = nearest(w, h, grey(a), scale)[2][0::4]          # GenerateTerrainTransitions before plan 13.5
+    a_nearest = nearest(w, h, grey(a), scale)[2][0::4]          # what GenerateTerrainTransitions used to do
     a_bilinear = m.upscale_bilinear(w, h, a, scale, channels=1)[2]
     save("3_layer.png", sheet([nearest(w, h, blend(w, h, grass, sand, a), 8),
                                 nearest(W, H, blend(W, H, grass_hd, sand_hd, a_nearest), 8 // scale or 1),

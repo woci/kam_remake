@@ -22,7 +22,7 @@ type
     rxxZero,    // Legacy KMR format
     rxxOne,     // Same as previous, but with an explicit header and SizeNoShadow
     rxxTwo,     // Same as previous, but with dynamic length text in header
-    rxxThree    // Same as previous, plus per-sprite Scale (HD multiplier, Single) and per-atlas HD flag in RXA (Docs/HD_Rendering_Plan.md 2.2 stage 3)
+    rxxThree    // Same as previous, plus per-sprite Scale (HD multiplier, Single) and per-atlas HD flag in RXA
   );
 
 const
@@ -176,7 +176,7 @@ type
   //                                        of array[0..3] //Terrain Rotation
                                             of Word;
 
-    // HD/SD live switch (Docs/HD_Rendering_Plan.md 12): the set that is currently NOT displayed, per RX.
+    // HD/SD live switch: the set that is currently NOT displayed, per RX.
     // Loaded lazily on the first switch, so it costs nothing unless used
     fAltSprites: array [TRXType] of TKMSpritePack;
     fAltGFXData: array [TRXType] of TKMGFXDataArray;
@@ -313,16 +313,16 @@ uses
 
 const
   MAX_GAME_ATLAS_SIZE = 2048; //Max atlas size for KaM. No need for bigger atlases
-  // HD terrain tiles (Docs/HD_Rendering_Plan.md, Phase 1)
+  // HD terrain tiles
   TILE_SD_PX = 32;             // Original tile size. Anything bigger is treated as HD
-  MAX_TILES_ATLAS_SIZE = 8192; // Tiles-only ceiling: 1646 tiles at 128px + padding need 8192 (plan 0.2). Other RX keep MAX_GAME_ATLAS_SIZE
+  MAX_TILES_ATLAS_SIZE = 8192; // Tiles-only ceiling: 1646 tiles at 128px + padding need 8192. Other RX keep MAX_GAME_ATLAS_SIZE
   TILES_HD_MIP_LEVELS = 2;     // Extra mip levels for HD tiles (D6: limited chain). Atlas padding = 2^levels
-  // HD sprites (Docs/HD_Rendering_Plan.md 2.7): Scale > 1 sprites are packed into their own atlases with linear filtering
+  // HD sprites: Scale > 1 sprites are packed into their own atlases with linear filtering
   // and a short mip chain, so that the untouched SD sprites keep their nearest-filtered look
   SPRITES_HD_MIP_LEVELS = 2;
   SPRITES_HD_PAD = 1 shl SPRITES_HD_MIP_LEVELS;
   SPRITE_TYPE_EXPORT_NAME: array [TKMSpriteAtlasType] of string = ('Base', 'Mask');
-  LOG_EXTRA_GFX: Boolean = True; // HD measurement (see Docs/HD_Rendering_Plan.md 0.1)
+  LOG_EXTRA_GFX: Boolean = False;
   OVERLOAD_SKIP_MASK = 'skip';
   // HD graphics: opt-in packs in data/Sprites/hd, switchable at runtime. Everything else stays stock
   HD_SPRITES_FOLDER = 'hd';
@@ -422,7 +422,7 @@ begin
 end;
 
 
-// Parse an overload file name: 'X_nnnn.png' or 'X_nnnn@Nx.png' (Docs/HD_Rendering_Plan.md 2.2, stage 2).
+// Parse an overload file name: 'X_nnnn.png' or 'X_nnnn@Nx.png'.
 // aScale = N for the '@Nx' form, 0 when there is no explicit HD marker. Companion files (a/m.png, .txt) are not accepted here
 function ParseOverloadFileName(const aFileName: string; out aId, aScale: Integer): Boolean;
 var
@@ -849,7 +849,7 @@ begin
   Assert((pngWidth <= MAX_GAME_ATLAS_SIZE) and (pngHeight <= MAX_GAME_ATLAS_SIZE),
          Format('Image size should be less than %dx%d pixels', [MAX_GAME_ATLAS_SIZE, MAX_GAME_ATLAS_SIZE]));
 
-  // HD scale derivation (Docs/HD_Rendering_Plan.md 2.2, stage 1): a replacement PNG that is an integer multiple
+  // HD scale derivation: a replacement PNG that is an integer multiple
   // (2x..) of the original sprite's *logical* size in both axes is an HD version of it, not a bigger object.
   // Compared against the logical size so that re-loading the same file from a second overload folder is stable.
   scale := 1;
@@ -1574,7 +1574,7 @@ end;
 
 
 
-// Texture filtering for this pack's atlases. HD tiles get linear filtering with a short mip chain (plan 1.3),
+// Texture filtering for this pack's atlases. HD tiles get linear filtering with a short mip chain,
 // everything else keeps the original nearest look.
 function TKMSpritePack.GetTexFilter(aHD: Boolean; out aMipLevels: Byte): TKMFilterType;
 begin
@@ -1595,7 +1595,7 @@ begin
   else
   if aHD then
   begin
-    // HD sprite atlas (plan 2.7): drawn minified ~Scale times at 100% zoom, so it needs linear filtering and a mip chain
+    // HD sprite atlas: drawn minified ~Scale times at 100% zoom, so it needs linear filtering and a mip chain
     Result := ftLinear;
     aMipLevels := SPRITES_HD_MIP_LEVELS;
   end;
@@ -1750,7 +1750,7 @@ var
   atlasSize: Integer;
 
   // Split the sprites by resolution class: SD (Scale = 1) and HD (Scale > 1) go into separate atlases,
-  // because filtering and padding are per-texture (plan 2.7). Tiles are never split (their whole pack is one class)
+  // because filtering and padding are per-texture. Tiles are never split (their whole pack is one class)
   procedure SplitByScale(const aAll: TIndexSizeArray; out aSD, aHD: TIndexSizeArray);
   var
     I, nSD, nHD: Integer;
@@ -1799,7 +1799,6 @@ var
 begin
   aBaseRAM := 0;
   aColorRAM := 0;
-  allTilesAtlasSize := 0;
   SetLength(fAtlases[saBase], 0);
   SetLength(fAtlases[saMask], 0);
   //Prepare base atlases
@@ -1828,7 +1827,7 @@ begin
     for J := 0 to K - 1 do
       fTilePx := Max(fTilePx, Max(spriteSizes[J].X, spriteSizes[J].Y));
 
-    // Padding is decided first (from the mip chain), then the atlas size is computed from it (plan 1.1 / 1.4)
+    // Padding is decided first (from the mip chain), then the atlas size is computed from it
     if fTilePx > TILE_SD_PX then
     begin
       fMipLevels := TILES_HD_MIP_LEVELS;
@@ -1849,12 +1848,6 @@ begin
     atlasSize := GetMaxAtlasSize;
 
   SplitByScale(spriteSizes, sdSizes, hdSizes);
-
-  // HD measurement (Docs/HD_Rendering_Plan.md 0.1): actual sprite count K and atlas sizing
-  if LOG_EXTRA_GFX then
-    gLog.AddTime(Format('[HD-MEASURE] %s: K=%d (HD %d) pad=%d atlasSize=%d maxAtlas=%d tilePx=%d mip=%d allTilesAtlasSize=%d allTilesInOne=%s',
-                        [RX_INFO[fRT].FileName, K, Length(hdSizes), fPad, atlasSize, GetMaxAtlasSize, fTilePx, fMipLevels,
-                         allTilesAtlasSize, BoolToStr(AllTilesInOneTexture, True)]));
 
   PackGroup(sdSizes, saBase, aTexType, fPad, False);
   if CheckTerminated then Exit;
@@ -2161,8 +2154,8 @@ begin
     //            GetEnumName(TypeInfo(TKMTileMaskType), Integer(J)), TexId]);
 
     //          fGenTerrainToTerKind.Add(IntToStr(TexId) + '=' + IntToStr(Integer(I)));
-                // Mask and base tile may differ in resolution (HD base tile + original 32px mask, plan 1.5):
-                // sample the mask bilinear in the base tile's pixel grid (plan 13.3.1)
+                // Mask and base tile may differ in resolution (HD base tile + original 32px mask):
+                // sample the mask bilinear in the base tile's pixel grid
                 tileW := aSprites.fRXData.Size[terrainId].X;
                 tileH := aSprites.fRXData.Size[terrainId].Y;
                 maskW := aSprites.fRXData.Size[maskId].X;
@@ -2533,7 +2526,7 @@ begin
 
   rxaFile := GetSpritesRXAFilePath(aRT, aHD);
   rxxFile := GetSpritesRXXFilePath(aRT, fAlphaShadows, aHD);
-  // Tiles are always packed from RXX (plan 10), the other RX prefer the ready-made atlases
+  // Tiles are always packed from RXX, the other RX prefer the ready-made atlases
   isRXASource := fAlphaShadows and (aRT <> rxTiles) and FileExists(rxaFile);
 
   if not isRXASource and (rxxFile = '') then

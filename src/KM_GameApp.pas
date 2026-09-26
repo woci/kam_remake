@@ -688,7 +688,7 @@ begin
 end;
 
 
-// Switch between the stock and the optional HD graphics (Docs/HD_Rendering_Plan.md 12).
+// Switch between the stock and the optional HD graphics.
 // Single entry point for the options checkbox and the Ctrl+Shift+H shortcut, in game and in the menu alike.
 // Returns False if the other set could not be loaded (the displayed one is then untouched)
 function TKMGameApp.SetHDGraphics(aEnable: Boolean): Boolean;

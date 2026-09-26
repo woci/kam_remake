@@ -159,7 +159,7 @@ class UpscaleTests(unittest.TestCase):
 
 
 class TileContextTests(unittest.TestCase):
-    """upscale_tile: the tile border must be as soft as the inside (Docs/HD_Rendering_Plan.md 13.3.2)."""
+    """upscale_tile: the tile border must be as soft as the inside."""
     GREY, GREEN, YELLOW = (128, 128, 128, 255), (0, 200, 0, 255), (250, 220, 0, 255)
     N = 4
 

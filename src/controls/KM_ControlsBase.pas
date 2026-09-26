@@ -800,7 +800,7 @@ begin
 
   if TexID <> 0 then
   begin
-    // HD terrain tiles are bigger than the 32px palette buttons: shrink them to fit (HD plan 1.7)
+    // HD terrain tiles are bigger than the 32px palette buttons: shrink them to fit
     anchors := [];
     if (RX = rxTiles)
       and ((gGFXData[RX, TexID].PxWidth / gGFXData[RX, TexID].Scale > Width)

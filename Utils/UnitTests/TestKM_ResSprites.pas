@@ -6,7 +6,7 @@ uses
   KM_CommonTypes, KM_ResTypes, KM_ResSprites, KM_ResSpritesEdit;
 
 type
-  // HD rendering support in the sprite packs (Docs/HD_Rendering_Plan.md):
+  // HD rendering support in the sprite packs:
   // per-sprite scale, overload file name parsing, atlas edge padding, PNG scale derivation, RXX3/RXA3 round trips,
   // transition mask sampling, and which pack (stock / HD, RXX / RXA) the loader picks
   TestKMResSprites = class(TTestCase)
@@ -419,7 +419,7 @@ begin
 end;
 
 
-// The 32 px transition masks are put on HD tiles with this (Docs/HD_Rendering_Plan.md 13.3.1)
+// The 32 px transition masks are put on HD tiles with this
 procedure TestKMResSprites.TestSampleBilinearClamped;
 const
   BLACK = $FF000000;

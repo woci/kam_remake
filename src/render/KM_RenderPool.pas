@@ -112,7 +112,7 @@ type
     constructor Create(aViewport: TKMViewport; aRender: TKMRender);
     destructor Destroy; override;
 
-    // Re-take the RXData shortcuts. Needed after the HD/SD compare swap replaced sprite packs (Docs/HD_Rendering_Plan.md 11)
+    // Re-take the RXData shortcuts. Needed after the HD/SD switch replaced sprite packs
     procedure RefreshRXData;
     procedure ReInit;
 
@@ -2125,7 +2125,7 @@ begin
   if aUID > 0 then
     with fRenderList[fCount].SelectionRect do
     begin
-      // Read per call, not cached: the HD/SD compare swap replaces the units sprite pack (plan 11)
+      // Read per call, not cached: the HD/SD switch replaces the units sprite pack
       unitsRXData := gRes.Sprites[rxUnits].RXDataP;
       // SizeNoShadow is in real texels, the selection rect is in logical (world) pixels -> divide by the sprite's HD scale
       s := unitsRXData^.ScaleOf(aId);

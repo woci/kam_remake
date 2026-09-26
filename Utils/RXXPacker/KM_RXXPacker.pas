@@ -29,7 +29,7 @@ type
     constructor Create(aRT: TRXType; aSourcePathRX, aSourcePathInterp, aDestinationPath: string; aPackToRXX, aPackToRXA: Boolean; aRXXFormat: TKMRXXFormat; aPalettes: TKMResPalettes;aOnMessage: TProc<string>);
 
     procedure Pack;
-    // HD packing (Docs/HD_Rendering_Plan.md 2.2 stage 3): takes the shipped RXX from SourcePathRX, applies the
+    // HD packing: takes the shipped RXX from SourcePathRX, applies the
     // replacement PNGs from SourcePathHD (a 'Modding graphics' style folder tree) exactly as the game would at startup,
     // and writes RXX3 / RXA3 files with the per-sprite scale into DestinationPath
     procedure PackHD;
