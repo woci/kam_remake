@@ -378,6 +378,48 @@ begin
 end;
 
 
+// Bilinear sample of an aSrcW x aSrcH image at the centre of pixel (aX, aY) of an aDstW x aDstH grid, per byte channel.
+// Used to put the 32px transition masks on HD tiles: nearest sampling turned every dithered mask pixel into a hard block.
+// Clamped, not wrapped: a mask edge has to stay its original edge, because the neighbouring tile's mask continues it
+function SampleBilinearClamped(const aPixels: array of Cardinal; aSrcW, aSrcH, aDstW, aDstH, aX, aY: Integer): Cardinal;
+const
+  PIXEL_CENTER = 0.5;
+  CHANNEL_COUNT = 4;
+  CHANNEL_BITS = 8;
+  CHANNEL_MASK = $FF;
+var
+  srcX, srcY, fracX, fracY, top, bottom: Single;
+  x0, y0, x1, y1, C, shift: Integer;
+  p00, p10, p01, p11: Cardinal;
+begin
+  // Only the low side needs a clamp: x1 / y1 below never step past the last pixel
+  srcX := (aX + PIXEL_CENTER) * aSrcW / aDstW - PIXEL_CENTER;
+  srcY := (aY + PIXEL_CENTER) * aSrcH / aDstH - PIXEL_CENTER;
+  if srcX < 0 then srcX := 0;
+  if srcY < 0 then srcY := 0;
+  x0 := Trunc(srcX);
+  y0 := Trunc(srcY);
+  x1 := Min(x0 + 1, aSrcW - 1);
+  y1 := Min(y0 + 1, aSrcH - 1);
+  fracX := srcX - x0;
+  fracY := srcY - y0;
+
+  p00 := aPixels[y0 * aSrcW + x0];
+  p10 := aPixels[y0 * aSrcW + x1];
+  p01 := aPixels[y1 * aSrcW + x0];
+  p11 := aPixels[y1 * aSrcW + x1];
+
+  Result := 0;
+  for C := 0 to CHANNEL_COUNT - 1 do
+  begin
+    shift := C * CHANNEL_BITS;
+    top    := ((p00 shr shift) and CHANNEL_MASK) * (1 - fracX) + ((p10 shr shift) and CHANNEL_MASK) * fracX;
+    bottom := ((p01 shr shift) and CHANNEL_MASK) * (1 - fracX) + ((p11 shr shift) and CHANNEL_MASK) * fracX;
+    Result := Result or (Cardinal(Trunc(top + (bottom - top) * fracY + PIXEL_CENTER)) shl shift);
+  end;
+end;
+
+
 // Parse an overload file name: 'X_nnnn.png' or 'X_nnnn@Nx.png' (Docs/HD_Rendering_Plan.md 2.2, stage 2).
 // aScale = N for the '@Nx' form, 0 when there is no explicit HD marker. Companion files (a/m.png, .txt) are not accepted here
 function ParseOverloadFileName(const aFileName: string; out aId, aScale: Integer): Boolean;
@@ -2004,7 +2046,7 @@ var
   genTilesCnt, genTilesCntTemp: Integer;
   tileW, tileH, maskW, maskH: Integer;
   sameRes: Boolean;
-  straightPx, maskPx{, RotatePixel}, maskCol: Cardinal;
+  straightPx{, RotatePixel}, maskSample, maskCol: Cardinal;
   generatedMasks: TDictionary<Integer, TKMMaskFullType>;
 begin
   Assert(not aLegacyGeneration or (aSprites = nil));
@@ -2118,7 +2160,7 @@ begin
 
     //          fGenTerrainToTerKind.Add(IntToStr(TexId) + '=' + IntToStr(Integer(I)));
                 // Mask and base tile may differ in resolution (HD base tile + original 32px mask, plan 1.5):
-                // sample the mask nearest-neighbour in the base tile's pixel grid
+                // sample the mask bilinear in the base tile's pixel grid (plan 13.3.1)
                 tileW := aSprites.fRXData.Size[terrainId].X;
                 tileH := aSprites.fRXData.Size[terrainId].Y;
                 maskW := aSprites.fRXData.Size[maskId].X;
@@ -2132,13 +2174,13 @@ begin
                     straightPx := L * tileW + M;
       //              RotatePixel := StraightPixel; //P * aSprites.fRXData.Size[TerrainId].X  + Q;
                     if sameRes then
-                      maskPx := straightPx
+                      maskSample := aSprites.fRXData.RGBA[maskId, straightPx]
                     else
-                      maskPx := (L * maskH div tileH) * maskW + (M * maskW div tileW);
+                      maskSample := SampleBilinearClamped(aSprites.fRXData.RGBA[maskId], maskW, maskH, tileW, tileH, M, L);
 
                     case TILE_MASK_KIND_USAGE[MK] of
-                      mkuPixel: maskCol := ($FFFFFF or (aSprites.fRXData.RGBA[maskId, maskPx] shl 24));
-                      mkuAlpha: maskCol := aSprites.fRXData.RGBA[maskId, maskPx];
+                      mkuPixel: maskCol := ($FFFFFF or (maskSample shl 24));
+                      mkuAlpha: maskCol := maskSample;
                     else
                       raise Exception.Create('Unexpected type');
                     end;
