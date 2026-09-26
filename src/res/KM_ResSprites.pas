@@ -286,6 +286,8 @@ var
   function ParseOverloadFileName(const aFileName: string; out aId, aScale: Integer): Boolean;
   // Replicate the outermost sprite pixels into the aPad wide ring around it (atlas edge padding). Exposed for unit tests
   procedure ExtendSpriteEdges(var aAtlas: TKMCardinalArray; aAtlasW, aX, aY, aW, aH, aPad: Integer);
+  // Bilinear, border-clamped, per byte channel sample (transition masks on HD tiles). Exposed for unit tests
+  function SampleBilinearClamped(const aPixels: array of Cardinal; aSrcW, aSrcH, aDstW, aDstH, aX, aY: Integer): Cardinal;
 
 
 implementation
